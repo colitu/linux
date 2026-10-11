@@ -60,6 +60,9 @@ public class ColituAdaptiveConnectTests
             ["c"] = new(20, Now.AddMinutes(-1), Lte),
         };
 
+        // b's 11-minute-old ping still orders (same network); c's was taken on another network.
+        Rank(servers, pings).Should().Equal("b", "a", "c");
+        pings["b"] = new(30, Now.AddHours(-7), Wifi);
         Rank(servers, pings).Should().Equal("a", "b", "c");
     }
 
@@ -106,9 +109,82 @@ public class ColituAdaptiveConnectTests
         var memory = new ColituAdaptiveMemory();
         memory.RememberGoodServer(Wifi, "c", Now.AddHours(-2));
 
-        Rank(servers, Pings(("a", 20), ("b", 30), ("c", 300)), memory).Should().Equal("c", "a", "b");
+        Rank(servers, Pings(("a", 20), ("b", 30), ("c", 80)), memory).Should().Equal("c", "a", "b");
+        Rank(servers, memory: memory).Should().Equal("c", "a", "b");
         // Another network: the memory is not applied there.
         Rank(servers, memory: memory, network: Lte).Should().Equal("a", "b", "c");
+    }
+
+    // ── Regression: a far server shown as "best" although its ping is bad ──────────────────────────
+    // Cause: the last good server led the order whatever its ping (24 h), and any connect, even a manual
+    // pick, made a server "last good"; and a stale/other-network measurement dropped the order back to the
+    // panel's (where a far server can be first).
+    [Fact]
+    public void Rank_LastGoodServerWithClearlyWorseLatency_NoLongerLeads()
+    {
+        var servers = new[] { Server("us1", "US"), Server("de1", "DE"), Server("nl1", "NL") };
+        var memory = new ColituAdaptiveMemory();
+        memory.RememberGoodServer(Wifi, "us1", Now.AddHours(-3));
+
+        // Was: us1 first (300 ms against 40 ms).
+        Rank(servers, Pings(("us1", 300), ("de1", 40), ("nl1", 55)), memory, country: "TR").Should().Equal("de1", "nl1", "us1");
+        // Just over the limit (2 x 40 + 50 = 130 ms) is still clearly worse; at it the memory wins.
+        Rank(servers, Pings(("us1", 131), ("de1", 40), ("nl1", 55)), memory).Should().Equal("de1", "nl1", "us1");
+        Rank(servers, Pings(("us1", 130), ("de1", 40), ("nl1", 55)), memory).Should().Equal("us1", "de1", "nl1");
+    }
+
+    [Fact]
+    public void Rank_LastGoodServerWithoutAPing_KeepsLeading_AndAFailedBetterServerDoesNotDemoteIt()
+    {
+        var servers = new[] { Server("a"), Server("b"), Server("c") };
+        var memory = new ColituAdaptiveMemory();
+        memory.RememberGoodServer(Wifi, "c", Now.AddHours(-1));
+
+        // No evidence against it.
+        Rank(servers, Pings(("a", 20), ("b", 30)), memory).Should().Equal("c", "a", "b");
+        // The fast ones failed or are penalized: they are no yardstick, the slow last-good stays first.
+        memory.Penalize(Wifi, "a", Now.AddMinutes(-1));
+        Rank(servers, Pings(("a", 20), ("b", null), ("c", 400)), memory).Should().Equal("c", "b", "a");
+    }
+
+    [Fact]
+    public void Rank_StalePingsStillOrderTheServers_InsteadOfThePanelOrder()
+    {
+        // The panel lists the far server first; the pings are 20 minutes old (a network change, a wake-up).
+        var servers = new[] { Server("us1", "US"), Server("de1", "DE"), Server("nl1", "NL") };
+        var pings = new Dictionary<string, ColituPingSample>
+        {
+            ["us1"] = new(280, Now.AddMinutes(-20), Wifi),
+            ["de1"] = new(45, Now.AddMinutes(-20), Wifi),
+            ["nl1"] = new(60, Now.AddMinutes(-20), Wifi),
+        };
+
+        Rank(servers, pings).Should().Equal("de1", "nl1", "us1");
+        // A stale failure is not believed.
+        pings["de1"] = new(null, Now.AddMinutes(-20), Wifi);
+        Rank(servers, pings).Should().Equal("nl1", "us1", "de1");
+    }
+
+    [Fact]
+    public void Rank_StillKeepsItsRules_WithTheLatencyCheck()
+    {
+        var servers = new[] { Server("ru1", "RU"), Server("us1", "US"), Server("de1", "DE"), Server("tr1", "TR") };
+        var memory = new ColituAdaptiveMemory();
+        memory.RememberGoodServer(Wifi, "ru1", Now.AddMinutes(-5));
+        memory.Penalize(Wifi, "de1", Now.AddMinutes(-2));
+        var pings = Pings(("ru1", 5), ("us1", 200), ("de1", 30), ("tr1", 10));
+
+        // Russia never; the penalized one last; the user's own country after the foreign ones.
+        Rank(servers, pings, memory, country: "TR").Should().Equal("us1", "tr1", "de1");
+    }
+
+    [Fact]
+    public void PingSample_IsUsableOnlyWhenSuccessfulOnThisNetworkAndWithinSixHours()
+    {
+        new ColituPingSample(50, Now.AddHours(-5), Wifi).IsUsable(Wifi, Now).Should().BeTrue();
+        new ColituPingSample(50, Now.AddHours(-7), Wifi).IsUsable(Wifi, Now).Should().BeFalse();
+        new ColituPingSample(50, Now.AddMinutes(-1), Lte).IsUsable(Wifi, Now).Should().BeFalse();
+        new ColituPingSample(null, Now.AddMinutes(-1), Wifi).IsUsable(Wifi, Now).Should().BeFalse();
     }
 
     [Fact]

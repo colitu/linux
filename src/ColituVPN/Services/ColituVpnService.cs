@@ -208,6 +208,12 @@ public sealed class ColituVpnService
     /// </summary>
     public async Task<Dictionary<string, int>> MeasurePingsAsync(IReadOnlyCollection<ColituVpnServer> servers)
     {
+        if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting && string.IsNullOrEmpty(ColituNetwork.PhysicalInterfaceName()))
+        {
+            // With the tunnel up a probe that cannot be bound to the physical interface goes through the
+            // tunnel and measures the distance to the exit, not to the server. Keep the old numbers.
+            return [];
+        }
         var network = CurrentNetworkKey();
         var measured = await ColituLatency.MeasureAllAsync(servers);
         var at = DateTimeOffset.UtcNow;
@@ -216,6 +222,40 @@ public sealed class ColituVpnService
             _pings[server.Id!] = new ColituPingSample(measured.TryGetValue(server.Id!, out var ms) ? ms : null, at, network);
         }
         return measured;
+    }
+
+    /// <summary>
+    /// Automatic mode ranks the servers by ping, and a ping is only believed for ten minutes on the
+    /// network it was taken on. After a network change or a long pause most of them are stale and the
+    /// order silently fell back to the panel's: a far server could come first. Measure again (at most
+    /// 4 s) before ranking, outside the tunnel and while nothing blocks the probes.
+    /// </summary>
+    private async Task EnsureFreshPingsAsync(CancellationToken token)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var candidates = _lastServers.Where(item => !item.IsMultihop && ColituLatency.CanProbe(item)).ToList();
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+            var fresh = candidates.Count(item => _pings.TryGetValue(item.Id!, out var sample) && sample.IsFresh(_networkKey, now));
+            if (fresh * 2 >= candidates.Count)
+            {
+                return;
+            }
+            LogConnection($"Pings are stale on this network ({fresh}/{candidates.Count} fresh); measuring before choosing the best server");
+            await MeasurePingsAsync(candidates).WaitAsync(TimeSpan.FromSeconds(4), token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Measuring pings before connecting failed: {ex.Message}");
+        }
     }
 
     /// <summary>"&lt;link&gt;|&lt;client_network&gt;" of the network this computer is on now; the link kind is looked up at most every 5 s.</summary>
@@ -445,6 +485,10 @@ public sealed class ColituVpnService
                 Notice?.Invoke("warn.otherVpn");
             }
 
+            if (automatic && !KillSwitchEngaged)
+            {
+                await EnsureFreshPingsAsync(token);
+            }
             var ranked = automatic ? RankedServers() : [];
             if (automatic)
             {
@@ -619,7 +663,12 @@ public sealed class ColituVpnService
             if (connected is { IsMultihop: false, Id.Length: > 0 })
             {
                 var now = DateTimeOffset.UtcNow;
-                _adaptive.RememberGoodServer(_networkKey, connected.Id, now);
+                // A server the user picked by hand is not "the one that works best here": only the automatic
+                // choice (and a recovery) makes a server lead the next automatic order.
+                if (automatic)
+                {
+                    _adaptive.RememberGoodServer(_networkKey, connected.Id, now);
+                }
                 _adaptive.RememberGoodTransport(_networkKey, connected.Id, _activeTransport, now);
             }
             _probeFailures = 0;
