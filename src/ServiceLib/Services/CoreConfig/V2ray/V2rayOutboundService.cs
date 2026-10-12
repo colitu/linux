@@ -326,11 +326,7 @@ public partial class CoreConfigV2rayService
                 {
                     tlsSettings.serverName = Utils.String2List(host)?.First();
                 }
-                if (!tlsSettings.echConfigList.IsNullOrEmpty())
-                {
-                    // For legacy xray compatibility, remove this in the future
-                    tlsSettings.echForceQuery = "full";
-                }
+                // echForceQuery was removed in Xray 26.6.22: not written.
                 var certs = CertPemManager.ParsePemChain(_node.Cert);
                 if (certs.Count > 0)
                 {
@@ -350,6 +346,8 @@ public partial class CoreConfigV2rayService
                 else if (!_node.CertSha.IsNullOrEmpty())
                 {
                     tlsSettings.pinnedPeerCertSha256 = _node.CertSha;
+                    // Xray 26.7.11+ checks a pinned certificate against a name: never leave it empty.
+                    tlsSettings.serverName ??= _node.Address.NullIfEmpty();
                 }
                 streamSettings.tlsSettings = tlsSettings;
             }

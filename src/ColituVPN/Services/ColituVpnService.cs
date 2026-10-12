@@ -978,7 +978,14 @@ public sealed class ColituVpnService
     /// </summary>
     private string PostProcessConfig(CoreConfigContext context, string json)
     {
-        json = ApplyWarmSpare(context, json);
+        json = AddCheckInbound(context, ApplyWarmSpare(context, json));
+        // Last, over everything the stages added: Xray 26.10 refuses repeated rule tags.
+        return context.RunCoreType == ECoreType.Xray ? ColituXrayRuleTags.Unique(json) : json;
+    }
+
+    /// <summary>The tunnel check inbound for the config of the profile being checked (<see cref="_checkIndexId"/>).</summary>
+    private string AddCheckInbound(CoreConfigContext context, string json)
+    {
         if (_checkIndexId == null || !string.Equals(context.Node?.IndexId, _checkIndexId, StringComparison.Ordinal))
         {
             return json;

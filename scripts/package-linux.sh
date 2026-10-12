@@ -5,10 +5,12 @@
 #
 # <publish-dir> is the output of
 #   dotnet publish src/ColituVPN -c Release -r linux-<arch> -p:SelfContained=true -p:Version=<version>
-# The Xray and sing-box cores (with their rule files) are taken from the prebuilt
-# core bundle in 2dust/v2rayN-core-bin, pinned to one commit and checked against
-# its SHA-256 (the cores run as root in TUN mode). Update CORE_COMMIT and both
-# hashes together. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild, sha256sum.
+# The Xray and sing-box cores come from their official GitHub releases, pinned by
+# version and SHA-256 (archive, Xray's .dgst file, and every file taken from it):
+# they run as root in TUN mode, so any mismatch stops the build. The geo rule files
+# come from the core bundle in 2dust/v2rayN-core-bin, pinned to one commit and its
+# SHA-256. Update the versions and all hashes together.
+# Needs: curl, unzip, tar, rsync, dpkg-deb, rpmbuild, sha256sum.
 #
 # The .deb also carries the headless client (colitud + colitu, headless/): it is
 # cross-compiled with Go (CGO_ENABLED=0). COLITU_HEADLESS=auto (default) includes it when
@@ -22,15 +24,42 @@ PUBLISH="${3:?publish dir}"
 OUT="${4:?out dir}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Xray v26.9.30, sing-box v1.14.2, rule files of 2026-10-04.
+# Rule files of 2026-10-04 (the bundle's own cores are replaced below).
 CORE_COMMIT="f75f07b3b2906909e6bd2961928e7debd2d75d2a"
+XRAY_VERSION="26.10.10"
+SINGBOX_VERSION="1.14.3"
 case "$ARCH" in
   x64)   DEB_ARCH=amd64; RPM_ARCH=x86_64;  CORE_ZIP=v2rayN-linux-64.zip
-         CORE_SHA256=41734f3d7137a6eb72a8e52d2e63dacf8ef0f1b4d6c6b142c05eb8c81ef9cc04 ;;
+         CORE_SHA256=41734f3d7137a6eb72a8e52d2e63dacf8ef0f1b4d6c6b142c05eb8c81ef9cc04
+         XRAY_ZIP=Xray-linux-64.zip
+         XRAY_ZIP_SHA256=72a5fde819713a103c6fc26a87aa025c1518c918a34eba4bc38d64dc0728e5d9
+         XRAY_SHA256=4cca4de3ab8c16b3803a70e9ebe0570d2a72480c716d89aa91603ec568bf0f44
+         SINGBOX_TGZ=sing-box-$SINGBOX_VERSION-linux-amd64.tar.gz
+         SINGBOX_TGZ_SHA256=e2bdf179c15a3652955dc44867e33ca0965c9c9b91b34267dcc5a5d639a5feee
+         SINGBOX_SHA256=768d31fa7f68debc067bb4626539498a1e8751d36a7b99e1a54bee6a23815f93
+         CRONET_SHA256=23109c55b08829bb1a68682a61a64852b1bbf243753b153cbd8f6e4ea2c05294 ;;
   arm64) DEB_ARCH=arm64; RPM_ARCH=aarch64; CORE_ZIP=v2rayN-linux-arm64.zip
-         CORE_SHA256=0dcb239900953954c3ac37e4c65019ef63d8af75c100348a486a5cca1eef5c10 ;;
+         CORE_SHA256=0dcb239900953954c3ac37e4c65019ef63d8af75c100348a486a5cca1eef5c10
+         XRAY_ZIP=Xray-linux-arm64-v8a.zip
+         XRAY_ZIP_SHA256=58e339e67827220175b3a1c6f66f48ccd086b79209f30ba1c0bcb47885d4c22a
+         XRAY_SHA256=fadf8d792889536a9410686f3d5c4df76ec7865b7aa2297495365759ffeb424c
+         SINGBOX_TGZ=sing-box-$SINGBOX_VERSION-linux-arm64.tar.gz
+         SINGBOX_TGZ_SHA256=29dae24d76bea3bc62d07dd3e60cfc12003de7debbd6b768df9be9c68360174e
+         SINGBOX_SHA256=299f9f6080d9c43504714ddddae6aa9b853d430ccfc816c456a73613b5455689
+         CRONET_SHA256=3c1fcfcb56261a4b318ffb6d2227b9726782edb5a894e74db2b534406db62498 ;;
   *) echo "unknown arch $ARCH" >&2; exit 1 ;;
 esac
+
+# Downloads $1 to $2 and stops the build unless its SHA-256 is $3.
+fetch_pinned() {
+  curl -fsSL "$1" -o "$2"
+  echo "$3  $2" | sha256sum -c --quiet - || { echo "checksum mismatch: $1" >&2; exit 1; }
+}
+# Stops the build unless file $1 has SHA-256 $2.
+check_file() {
+  [[ -f "$1" ]] || { echo "missing: $1" >&2; exit 1; }
+  echo "$2  $1" | sha256sum -c --quiet - || { echo "checksum mismatch: $1" >&2; exit 1; }
+}
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -54,6 +83,24 @@ rsync -a "$CORE_BIN/" "$APP/bin/"
 rm -rf "$APP/bin/mihomo" "$APP/bin/hysteria" "$APP/bin/naiveproxy" "$APP/bin/tuic" "$APP/bin/juicity" "$APP/bin/brook" "$APP/bin/shadowquic" 2>/dev/null || true
 [[ -x "$APP/bin/xray/xray" || -f "$APP/bin/xray/xray" ]] || { echo "xray missing from the bundle" >&2; exit 1; }
 [[ -f "$APP/bin/sing_box/sing-box" ]] || { echo "sing-box missing from the bundle" >&2; exit 1; }
+
+# The cores themselves: the official releases, every file checked before it replaces the bundle's.
+XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/$XRAY_ZIP"
+SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/download/v$SINGBOX_VERSION/$SINGBOX_TGZ"
+echo "[+] Xray $XRAY_VERSION ($XRAY_ZIP), sing-box $SINGBOX_VERSION ($SINGBOX_TGZ)"
+fetch_pinned "$XRAY_URL" "$WORK/xray.zip" "$XRAY_ZIP_SHA256"
+curl -fsSL "$XRAY_URL.dgst" -o "$WORK/xray.zip.dgst"
+grep -qiE "^SHA2-256= *$XRAY_ZIP_SHA256\$" "$WORK/xray.zip.dgst" || { echo "the Xray release's .dgst does not list the pinned SHA-256" >&2; exit 1; }
+fetch_pinned "$SINGBOX_URL" "$WORK/sing-box.tar.gz" "$SINGBOX_TGZ_SHA256"
+mkdir -p "$WORK/xray" "$WORK/sing-box"
+unzip -q "$WORK/xray.zip" xray -d "$WORK/xray"
+tar -xzf "$WORK/sing-box.tar.gz" -C "$WORK/sing-box" --strip-components=1
+check_file "$WORK/xray/xray" "$XRAY_SHA256"
+check_file "$WORK/sing-box/sing-box" "$SINGBOX_SHA256"
+check_file "$WORK/sing-box/libcronet.so" "$CRONET_SHA256"
+install -m 0755 "$WORK/xray/xray" "$APP/bin/xray/xray"
+install -m 0755 "$WORK/sing-box/sing-box" "$APP/bin/sing_box/sing-box"
+install -m 0644 "$WORK/sing-box/libcronet.so" "$APP/bin/sing_box/libcronet.so"
 # Russian sites direct: Xray uses the bundle's geosite.dat/geoip.dat, sing-box these rule sets
 # (it would otherwise download them from GitHub, which is blocked in Russia).
 mkdir -p "$APP/bin/srss"
