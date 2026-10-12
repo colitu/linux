@@ -39,6 +39,9 @@ public sealed class ColituUpdateService
         $"{ColituAuthService.WebBaseUrl}/downloads/linux/latest.json";
 
     private static readonly string LocalVersionName = ColituAuthService.ClientVersion;
+
+    /// <summary>A package larger than this is not downloaded (the real ones are well under 200 MB).</summary>
+    internal const long MaxPackageBytes = 512L << 20;
     private static readonly TimeSpan AttemptCooldown = TimeSpan.FromMinutes(30);
 
     private readonly HttpClient _httpClient = new(ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false })) { Timeout = TimeSpan.FromSeconds(30) };
@@ -186,9 +189,9 @@ public sealed class ColituUpdateService
             throw new InvalidOperationException("This installation cannot update itself.");
         }
         ValidateDownloadUrl(info.DownloadUrl);
-        if (string.IsNullOrWhiteSpace(info.Sha256))
+        if (!IsSha256Hex(info.Sha256))
         {
-            throw new InvalidOperationException("The release manifest does not carry a SHA256 for the update.");
+            throw new InvalidOperationException("The release manifest does not carry a valid SHA256 for the update.");
         }
         var updateDir = ColituHardening.CreateProtectedDirectory(Path.Combine(Utils.StartupPath(), UpdateFolderName));
         var destPath = Path.Combine(updateDir, $"colitu-vpn-{info.VersionCode}.{info.PackageKind}");
@@ -197,6 +200,10 @@ public sealed class ColituUpdateService
         response.EnsureSuccessStatusCode();
 
         var total = response.Content.Headers.ContentLength ?? -1;
+        if (total > MaxPackageBytes)
+        {
+            throw new InvalidOperationException("The update package is too large.");
+        }
         await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
         await using (var dest = File.Create(destPath))
         {
@@ -205,8 +212,13 @@ public sealed class ColituUpdateService
             int read;
             while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
             {
-                await dest.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                 downloaded += read;
+                if (downloaded > MaxPackageBytes)
+                {
+                    // The size header is not trusted: never fill the disk with a runaway download.
+                    throw new InvalidOperationException("The update package is too large.");
+                }
+                await dest.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                 if (total > 0)
                 {
                     progress?.Report(new ColituDownloadProgress
@@ -234,7 +246,11 @@ public sealed class ColituUpdateService
         {
             throw new InvalidOperationException("Update file not downloaded.");
         }
-        // Checked again right before root sees the file.
+        // Checked again right before root sees the file; the hash goes to root's script as an argument.
+        if (!IsSha256Hex(info.Sha256))
+        {
+            throw new InvalidOperationException("The release manifest does not carry a valid SHA256 for the update.");
+        }
         VerifySha256(info.LocalPath, info.Sha256!);
         SaveUpdateState(new ColituUpdateState
         {
@@ -293,13 +309,18 @@ public sealed class ColituUpdateService
     public static void RelaunchAfterExit()
     {
         var exe = Path.Combine(PackageInstallDir, "ColituVPN");
-        var startInfo = new ProcessStartInfo("setsid") { UseShellExecute = false };
-        foreach (var arg in new[] { "sh", "-c", $"while kill -0 {Environment.ProcessId} 2>/dev/null; do sleep 0.5; done; exec \"{exe}\"" })
+        // Absolute paths, like every other program Colitu starts: never one from a user-writable PATH entry.
+        var startInfo = new ProcessStartInfo(ColituShell.SystemBinary("setsid")) { UseShellExecute = false };
+        foreach (var arg in new[] { ColituShell.SystemBinary("sh"), "-c", $"while kill -0 {Environment.ProcessId} 2>/dev/null; do sleep 0.5; done; exec \"{exe}\"" })
         {
             startInfo.ArgumentList.Add(arg);
         }
         using var _ = Process.Start(startInfo);
     }
+
+    /// <summary>Exactly 64 hex digits (the SHA-256 the signed manifest carries).</summary>
+    internal static bool IsSha256Hex(string? value) =>
+        value?.Trim() is { Length: 64 } hex && hex.All(char.IsAsciiHexDigit);
 
     private static void VerifySha256(string filePath, string expectedHex)
     {
@@ -427,7 +448,7 @@ public sealed class ColituUpdateInfo
     public bool Force { get; set; }
     public string Notes { get; set; } = "";
     public string? LocalPath { get; set; }
-    public bool CanInstall => PackageKind != null && !string.IsNullOrWhiteSpace(Sha256);
+    public bool CanInstall => PackageKind != null && ColituUpdateService.IsSha256Hex(Sha256);
 }
 
 public sealed class ColituDownloadProgress

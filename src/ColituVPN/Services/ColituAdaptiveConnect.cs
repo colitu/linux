@@ -67,6 +67,33 @@ public static class ColituAdaptiveConnect
     /// </summary>
     public static readonly TimeSpan PingUsableFor = TimeSpan.FromHours(6);
 
+    /// <summary>What automatic mode chose and what the best measured candidate was (for the choice telemetry).</summary>
+    public sealed record Choice(string ChosenId, int ChosenMs, string BestId, int BestMs);
+
+    /// <summary>
+    /// The first of <paramref name="ranked"/> with its measured ping, and the candidate with the lowest measured
+    /// ping (the chosen one included, so best is never above chosen). Null when the chosen server has no usable ping.
+    /// </summary>
+    public static Choice? ChoiceOf(IReadOnlyList<ColituVpnServer> ranked, IReadOnlyDictionary<string, ColituPingSample> pings, string networkKey, DateTimeOffset now)
+    {
+        int? MsOf(ColituVpnServer server) =>
+            server.Id != null && pings.TryGetValue(server.Id, out var sample) ? sample.EffectiveMs(networkKey, now) : null;
+
+        if (ranked.Count == 0 || ranked[0].Id is not { } chosenId || MsOf(ranked[0]) is not { } chosenMs)
+        {
+            return null;
+        }
+        var best = (Id: chosenId, Ms: chosenMs);
+        foreach (var server in ranked)
+        {
+            if (server.Id != null && MsOf(server) is { } ms && ms < best.Ms)
+            {
+                best = (server.Id, ms);
+            }
+        }
+        return new Choice(chosenId, chosenMs, best.Id, best.Ms);
+    }
+
     /// <summary>
     /// Servers of the list in the order automatic mode tries them (multihop routes, unavailable
     /// and locked servers and those in <see cref="AutoExcludedCountries"/> left out). The "best server" entry shows rank[0], and connect uses it:
@@ -144,6 +171,10 @@ public sealed record ColituPingSample(int? Ms, DateTimeOffset MeasuredAt, string
         string.Equals(NetworkKey, networkKey, StringComparison.Ordinal)
         && now - MeasuredAt < ColituAdaptiveConnect.PingFreshFor
         && MeasuredAt <= now + TimeSpan.FromMinutes(1);
+
+    /// <summary>The ping the ranking uses: the fresh one (null when it failed), else a stale successful one of this network.</summary>
+    public int? EffectiveMs(string networkKey, DateTimeOffset now) =>
+        IsFresh(networkKey, now) ? Ms : IsUsable(networkKey, now) ? Ms : null;
 
     /// <summary>A successful ping of this network that is stale but still good enough to order the servers.</summary>
     public bool IsUsable(string networkKey, DateTimeOffset now) =>

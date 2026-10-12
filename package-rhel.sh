@@ -523,6 +523,8 @@ find %{buildroot}/opt/colitu-vpn -type f -exec chmod 0644 {} +
 [ -f %{buildroot}/opt/colitu-vpn/ColituVPN ] && chmod 0755 %{buildroot}/opt/colitu-vpn/ColituVPN || :
 find %{buildroot}/opt/colitu-vpn/bin -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} + 2>/dev/null || :
 [ -f %{buildroot}/opt/colitu-vpn/AmazTool ] && chmod 0755 %{buildroot}/opt/colitu-vpn/AmazTool || :
+# TUN mode refuses cores that group/others can write: never ship one.
+if [ -n "$(find %{buildroot}/opt/colitu-vpn ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in /opt/colitu-vpn" >&2; exit 1; fi
 
 install -dm0755 %{buildroot}%{_bindir}
 install -m0755 /dev/stdin %{buildroot}%{_bindir}/colitu-vpn << 'EOF'
@@ -575,6 +577,8 @@ if [ "$1" -eq 0 ]; then
 fi
 
 %files
+# Root-owned: TUN mode runs the cores in /opt/colitu-vpn/bin as root and refuses any other owner.
+%defattr(-,root,root,-)
 %{_bindir}/colitu-vpn
 /opt/colitu-vpn
 %{_datadir}/applications/colitu-vpn.desktop

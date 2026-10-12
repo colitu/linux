@@ -372,6 +372,12 @@ public sealed class ColituAuthService
         };
     }
 
+    /// <summary>
+    /// Every API response is buffered before it is read: a larger one fails instead of filling the memory.
+    /// Room for the largest legitimate body, a 50 MB support attachment.
+    /// </summary>
+    internal const long MaxResponseBytes = 64L << 20;
+
     private static HttpClient CreateHttpClient() => new(ColituCertPins.Pin(new SocketsHttpHandler
     {
         UseProxy = false,
@@ -380,7 +386,7 @@ public sealed class ColituAuthService
         // The kill switch drops DNS to public upstream resolvers: dial the API's pinned addresses.
         ConnectCallback = ColituPinnedHosts.ConnectAsync
     }))
-    { Timeout = TimeSpan.FromSeconds(20) };
+    { Timeout = TimeSpan.FromSeconds(20), MaxResponseContentBufferSize = MaxResponseBytes };
 
     /// <summary>
     /// The tunnel just came up or went down. Keep-alive connections opened over the old route

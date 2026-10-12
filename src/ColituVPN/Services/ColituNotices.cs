@@ -85,9 +85,39 @@ public static class ColituNotices
         }
     }
 
+    /// <summary>Hosts of the build's mirror origins (the "ColituMirrors" build metadata), lower case.</summary>
+    private static readonly Lazy<IReadOnlySet<string>> MirrorHosts = new(() => HostsOf(ColituEndpointList.BuiltInMirrors));
+
+    internal static IReadOnlySet<string> HostsOf(IEnumerable<string> origins) =>
+        origins.Select(origin => Uri.TryCreate(origin, UriKind.Absolute, out var uri) ? uri.Host.ToLowerInvariant().TrimEnd('.') : null)
+            .Where(host => !string.IsNullOrEmpty(host))
+            .Select(host => host!)
+            .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The link of a notice when it may be opened: https only, no user info, at most 2048 characters, no
+    /// whitespace, and the host is colitu.com, a subdomain of it or one of the build's mirror hosts.
+    /// Anything else (other hosts, http:, javascript:, file:, mailto:) is null and gets no button.
+    /// </summary>
+    public static string? SafeUrl(string? url, IReadOnlySet<string>? allowedHosts = null)
+    {
+        var value = url?.Trim() ?? "";
+        if (value.Length is 0 or > 2048 || value.Any(char.IsWhiteSpace)
+            || !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || !ColituShell.IsSafeLink(value, allowMail: false)
+            || !Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+        var host = uri.Host.ToLowerInvariant().TrimEnd('.');
+        var trusted = host == "colitu.com" || host.EndsWith(".colitu.com", StringComparison.Ordinal)
+            || (allowedHosts ?? MirrorHosts.Value).Contains(host);
+        return trusted ? value : null;
+    }
+
     /// <summary>
     /// Drops notices without an id or text, clips the texts, falls back to the neutral
-    /// level and removes links that are not plain https (they are never opened).
+    /// level and removes links that are not https to colitu.com or a build mirror (they are never opened).
     /// </summary>
     public static List<ColituNotice> Sanitize(IEnumerable<ColituNotice?>? notices)
     {
@@ -110,8 +140,8 @@ public static class ColituNotices
             {
                 continue;
             }
-            var url = notice.Url?.Trim();
-            var safe = ColituShell.IsSafeLink(url, allowMail: false);
+            var url = SafeUrl(notice.Url);
+            var safe = url != null;
             var button = safe ? Clip(notice.Button, MaxButton) : "";
             result.Add(new ColituNotice
             {

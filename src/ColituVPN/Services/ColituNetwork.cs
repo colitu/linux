@@ -84,7 +84,8 @@ public static class ColituNetwork
         // The resolvers' own names can't be looked up while the kill switch drops DNS.
         ConnectCallback = ColituPinnedHosts.ConnectAsync
     })
-    { Timeout = TimeSpan.FromSeconds(5) };
+    // A DNS answer is a few hundred bytes: a resolver (or anything in its place) cannot fill the memory.
+    { Timeout = TimeSpan.FromSeconds(5), MaxResponseContentBufferSize = 64 * 1024 };
 
     /// <summary>Drops keep-alive DoH connections opened over a route that changed with the tunnel.</summary>
     public static void ResetConnections()

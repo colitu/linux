@@ -717,6 +717,8 @@ EOF
   [[ -f "$stage/opt/colitu-vpn/ColituVPN" ]] && chmod 0755 "$stage/opt/colitu-vpn/ColituVPN" || true
   find "$stage/opt/colitu-vpn/bin" -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} + 2>/dev/null || true
   [[ -f "$stage/opt/colitu-vpn/AmazTool" ]] && chmod 0755 "$stage/opt/colitu-vpn/AmazTool" || true
+  # TUN mode refuses cores that group/others can write: never ship one.
+  if [ -n "$(find "$stage/opt/colitu-vpn" ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in /opt/colitu-vpn" >&2; exit 1; fi
 
   deb_out="$OUTPUT_DIR/colitu-vpn_${VERSION}_${deb_arch}.deb"
   dpkg-deb --root-owner-group --build "$stage" "$deb_out"

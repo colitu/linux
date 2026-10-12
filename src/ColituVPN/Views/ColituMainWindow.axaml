@@ -2255,6 +2255,23 @@
                                                     Grid.Column="1"
                                                     Theme="{StaticResource Switch}" />
                                             </Grid>
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.stats}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.statsHint}"
+                                                        TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsStats"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
 

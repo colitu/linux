@@ -49,6 +49,7 @@ public partial class ColituMainWindow
         {
             box.IsCheckedChanged += async (sender, _) => await PreferenceChangedAsync(sender);
         }
+        SettingsStats.IsCheckedChanged += (_, _) => StatsChanged();
         HookUiMode();
     }
 
@@ -409,6 +410,7 @@ public partial class ColituMainWindow
             SettingsPrivacy.IsChecked = preferences.PrivacyModeEnabled;
             SettingsWarmSpare.IsChecked = preferences.WarmSpareEnabled;
             SettingsTray.IsChecked = preferences.CloseToTray;
+            SettingsStats.IsChecked = ColituInsights.Instance.StatsEnabled;
             SettingsStartup.IsChecked = _vpn.LaunchAtStartup;
             ApplySplitToUi();
             ApplyRotationUi();
@@ -443,6 +445,17 @@ public partial class ColituMainWindow
             return;
         }
         await SavePreferencesAsync(_vpn.Preferences with { ConnectionMode = normalized });
+    }
+
+    /// <summary>Anonymous statistics switch: off stops collecting and sending and deletes what is pending.</summary>
+    private void StatsChanged()
+    {
+        if (_applyingPreferences || !IsLoaded)
+        {
+            return;
+        }
+        ColituInsights.Instance.SetStatsEnabled(SettingsStats.IsChecked == true);
+        ShowToast(Loc.I["settings.saved"]);
     }
 
     private async Task PreferenceChangedAsync(object? sender)

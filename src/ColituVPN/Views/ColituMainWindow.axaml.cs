@@ -215,6 +215,8 @@ public partial class ColituMainWindow : Window
             ApplyStatus();
             _ = MeasurePingsAsync();
             _ = RefreshNoticesAsync();
+            // Anonymous statistics: one report and one event batch when due (thread pool, never the UI thread).
+            _ = Task.Run(ColituInsightSender.TrySendAsync);
             if (_page == "account")
             {
                 await LoadDevicesAsync();

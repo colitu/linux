@@ -82,6 +82,10 @@ public class ColituNoticesTests
     [InlineData("file:///C:/Windows/system32/calc.exe")]
     [InlineData("mailto:a@b.c")]
     [InlineData("/relative")]
+    [InlineData("https://example.test/offer")]
+    [InlineData("https://colitu.com.example.test/x")]
+    [InlineData("https://evilcolitu.com/x")]
+    [InlineData("https://user@colitu.com/x")]
     public void UnsafeLinks_RemoveTheButton(string url)
     {
         var json = $$"""{"notices":[{"id":"x","title":"t","button":"Open","url":"{{url}}"}]}""";
@@ -237,5 +241,30 @@ public class ColituNoticesTests
         {
             File.Delete(path);
         }
+    }
+
+    [Theory]
+    [InlineData("https://colitu.com/pricing", true)]
+    [InlineData("https://COLITU.com/pricing", true)]
+    [InlineData("https://lab.colitu.com/x", true)]
+    [InlineData("https://colitu.com./x", true)]
+    [InlineData("https://mirror.example.test/capi", true)]
+    [InlineData("https://other.example.test/", false)]
+    [InlineData("https://colitu.com.example.test/", false)]
+    [InlineData("http://colitu.com/", false)]
+    [InlineData("https://colitu.com/a b", false)]
+    [InlineData("https://user:pw@colitu.com/", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void SafeUrl_AllowsColituAndTheBuildMirrorsOnly(string? url, bool allowed)
+    {
+        var mirrors = ColituNotices.HostsOf(["https://mirror.example.test", "not a url"]);
+        (ColituNotices.SafeUrl(url, mirrors) != null).Should().Be(allowed);
+    }
+
+    [Fact]
+    public void SafeUrl_RefusesOverlongLinks()
+    {
+        ColituNotices.SafeUrl("https://colitu.com/" + new string('a', 2100), new HashSet<string>()).Should().BeNull();
     }
 }

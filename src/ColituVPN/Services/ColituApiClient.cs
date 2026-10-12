@@ -20,12 +20,19 @@ public sealed class ColituApiClient
 
     private ColituApiClient() { }
 
+    /// <summary>
+    /// At most this many servers (and as many multihop routes) are kept from one list: the panel sends a
+    /// few dozen, and a broken or hostile list must not freeze the location page or the ping round.
+    /// </summary>
+    internal const int MaxServerList = 1000;
+
     public async Task<ColituServersResponse> GetServersAsync()
     {
         var subscription = ColituAuthService.Instance.CurrentSubscription;
         var response = await ColituAuthService.Instance.GetAuthorizedJsonAsync<ColituServerListDto>("/servers") ?? new();
         var servers = (response.Servers ?? [])
             .Where(server => !string.IsNullOrWhiteSpace(server.Id))
+            .Take(MaxServerList)
             .Select(MapServer)
             .ToList();
         return new ColituServersResponse
@@ -55,6 +62,7 @@ public sealed class ColituApiClient
     {
         return (routes ?? [])
             .Where(route => !string.IsNullOrWhiteSpace(route.Id) && route.Multihop != false && route.Entry != null && route.Exit != null)
+            .Take(MaxServerList)
             .Select(MapRoute)
             .ToList();
     }

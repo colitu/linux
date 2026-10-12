@@ -31,28 +31,30 @@ public class CoreAdminManager
 
     public async Task<ProcessService?> RunProcessAsLinuxSudo(string fileName, CoreInfo coreInfo, string configPath)
     {
-        StringBuilder sb = new();
-        sb.AppendLine("#!/bin/bash");
-        // Absolute sudo: never one found earlier in a user-writable PATH entry.
-        var sudo = SudoPath();
-        var cmdLine = $"{fileName.AppendQuotes()} {string.Format(coreInfo.Arguments, Utils.GetBinConfigPath(configPath).AppendQuotes())}";
+        // Root never runs the core copy in the user's data folder: only the install folder's copy,
+        // and only when it and every folder above it belong to root (see RootCoreGuard).
+        var rootCore = RootCoreGuard.ResolveForRoot(fileName, out var reason);
+        if (rootCore == null)
+        {
+            Logging.SaveLog($"{_tag}: core not run as root ({reason})");
+            throw new UnauthorizedAccessException(RootCoreRefusedMessage);
+        }
 
+        // sudo is started directly with the command as arguments (no shell script in the user's
+        // data folder that something running as the user could swap to read the password).
+        var args = new StringBuilder("-S -- ");
         // Passing environment variables to the sudo command, here it only xray or sing-box.
-        if (coreInfo.Environment.Count > 0)
+        var envArgs = coreInfo.Environment.Where(kv => kv.Value.IsNotEmpty()).Select(kv => $"{kv.Key}={kv.Value.AppendQuotes()}").ToList();
+        if (envArgs.Count > 0)
         {
-            var envArgs = string.Join(" ", coreInfo.Environment.Where(kv => kv.Value.IsNotEmpty()).Select(kv => $"{kv.Key}={kv.Value.AppendQuotes()}"));
-            sb.AppendLine($"exec {sudo} -S -- env {envArgs} {cmdLine}");
+            args.Append("env ").Append(string.Join(" ", envArgs)).Append(' ');
         }
-        else
-        {
-            sb.AppendLine($"exec {sudo} -S -- {cmdLine}");
-        }
-
-        var shFilePath = await FileUtils.CreateLinuxShellFile("run_as_sudo.sh", sb.ToString(), true);
+        args.Append(rootCore.AppendQuotes()).Append(' ')
+            .Append(string.Format(coreInfo.Arguments, Utils.GetBinConfigPath(configPath).AppendQuotes()));
 
         var procService = new ProcessService(
-            fileName: shFilePath,
-            arguments: "",
+            fileName: SudoPath(),
+            arguments: args.ToString(),
             workingDirectory: Utils.GetBinConfigPath(),
             displayLog: true,
             redirectInput: true,
@@ -70,6 +72,9 @@ public class CoreAdminManager
 
         return procService;
     }
+
+    /// <summary>Shown when TUN mode is refused because the core is not in a root-owned install folder.</summary>
+    public const string RootCoreRefusedMessage = "TUN mode needs the VPN core in a root-owned install folder (install the .deb/.rpm package); proxy mode still works.";
 
     private static string SudoPath() => File.Exists("/usr/bin/sudo") ? "/usr/bin/sudo" : File.Exists("/bin/sudo") ? "/bin/sudo" : "sudo";
 

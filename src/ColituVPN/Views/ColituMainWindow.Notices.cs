@@ -118,7 +118,12 @@ public partial class ColituMainWindow
         {
             return;
         }
-        OpenUrl(notice.Url!);
+        // Checked again at the click: only colitu.com, its subdomains and the build's mirrors open.
+        if (ColituNotices.SafeUrl(notice.Url) is not { } url)
+        {
+            return;
+        }
+        OpenUrl(url);
         _ = ColituNoticeService.Instance.SendEventAsync(notice.Id, ColituNotices.EventClicked);
     }
 

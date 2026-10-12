@@ -67,6 +67,8 @@ find "$APP" -type d -exec chmod 0755 {} +
 find "$APP" -type f -exec chmod 0644 {} +
 chmod 0755 "$APP/ColituVPN"
 find "$APP/bin" -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} +
+# TUN mode refuses cores that group/others can write: never ship one.
+if [ -n "$(find "$APP" ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in $APP" >&2; exit 1; fi
 find "$APP" -maxdepth 1 -type f -name '*.so' -exec chmod 0755 {} +
 [[ -f "$APP/createdump" ]] && chmod 0755 "$APP/createdump"
 
@@ -225,6 +227,8 @@ fi
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || :
 
 %files
+# Root-owned: TUN mode runs the cores in /opt/colitu-vpn/bin as root and refuses any other owner.
+%defattr(-,root,root,-)
 /opt/colitu-vpn
 /usr/bin/colitu-vpn
 /usr/share/applications/colitu-vpn.desktop

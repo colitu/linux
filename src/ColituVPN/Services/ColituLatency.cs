@@ -11,10 +11,19 @@ namespace v2rayN.Desktop.Services;
 /// tries, like the phone apps. The socket is bound to the physical interface
 /// with SO_BINDTODEVICE where the kernel allows it, so the number describes this
 /// computer's own path to the server even while the VPN is connected.
+/// The probe address comes from the server list, so it is bounded like on the phone: at most
+/// <see cref="MaxServers"/> servers, <see cref="Parallel"/> connects at a time, only
+/// <see cref="AllowedPorts"/>, and never a loopback, private, link-local or CGNAT address after
+/// resolving (no scan of this computer or its LAN).
 /// </summary>
 public static class ColituLatency
 {
     private const int TimeoutMs = 2500;
+    internal const int MaxServers = 200;
+    internal const int Parallel = 8;
+
+    /// <summary>Ports a node's probe may use: the transports' TLS-style ports and the usual alternatives.</summary>
+    internal static readonly IReadOnlySet<int> AllowedPorts = new HashSet<int> { 443, 2053, 2083, 2087, 2096, 3443, 4433, 7443, 8388, 8443, 9443 };
     private const int SolSocket = 1;
     private const int SoBindToDevice = 25;
 
@@ -22,11 +31,25 @@ public static class ColituLatency
     public static async Task<Dictionary<string, int>> MeasureAllAsync(IEnumerable<ColituVpnServer> servers)
     {
         var device = ColituNetwork.PhysicalInterfaceName();
+        using var gate = new SemaphoreSlim(Parallel);
         var probes = servers
             .Where(CanProbe)
             .GroupBy(server => server.Id!, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
-            .Select(async server => (server.Id!, await MeasureAsync(server.Host!, server.Port!.Value, device)));
+            .Take(MaxServers)
+            .Select(async server =>
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    return (server.Id!, await MeasureAsync(server.Host!, server.Port!.Value, device));
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            })
+            .ToList();
         var results = await Task.WhenAll(probes);
         return results
             .Where(result => result.Item2 != null)
@@ -35,10 +58,30 @@ public static class ColituLatency
 
     /// <summary>The server has a probe address: a missing result from <see cref="MeasureAllAsync"/> means the ping failed.</summary>
     public static bool CanProbe(ColituVpnServer server) =>
-        server.Id.IsNotEmpty() && server.Host.IsNotEmpty() && server.Port is > 0 and < 65536;
+        server.Id.IsNotEmpty() && server.Port is { } port && ProbeAllowed(server.Host, port);
+
+    /// <summary><paramref name="port"/> is an allowed probe port and <paramref name="host"/> a name or a public literal.</summary>
+    internal static bool ProbeAllowed(string? host, int port)
+    {
+        if (!AllowedPorts.Contains(port))
+        {
+            return false;
+        }
+        var h = host?.Trim() ?? "";
+        if (h.Length is 0 or > 253 || h.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || h.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        return !IPAddress.TryParse(h.Trim('[', ']'), out var literal) || IsPublic(literal);
+    }
 
     public static async Task<int?> MeasureAsync(string host, int port, string? device)
     {
+        if (!ProbeAllowed(host, port))
+        {
+            return null;
+        }
         IPAddress? address;
         try
         {
