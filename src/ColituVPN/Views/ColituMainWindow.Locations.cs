@@ -478,11 +478,33 @@ public sealed class ColituServerRow
         StateForeground = connected ? ConnectedText : SelectedText;
     }
 
+    /// <summary>
+    /// Search: the shown texts and every language the name tables know, case- and
+    /// diacritic-insensitively ("London" finds a server the panel named "Londra").
+    /// </summary>
     public bool Matches(string query)
     {
-        return new[] { Title, Subtitle, Server?.Country, Server?.CountryCode, Server?.City, Server?.Entry?.City, Server?.Entry?.Country, Server?.Exit?.City, Server?.Exit?.Country }
-            .Any(value => value?.Contains(query, StringComparison.CurrentCultureIgnoreCase) == true);
+        var server = Server;
+        var texts = new List<string?> { Title, Subtitle, server?.CountryCode };
+        if (server != null)
+        {
+            texts.AddRange(ColituServerNames.Variants(server.DisplayName, server.CountryCode));
+            texts.AddRange(ColituServerNames.Variants(server.Name, server.CountryCode));
+            texts.AddRange(ColituServerNames.Variants(server.City));
+            texts.AddRange(CountryNames(server.CountryCode));
+            texts.Add(server.Country);
+            foreach (var end in new[] { server.Entry, server.Exit })
+            {
+                texts.AddRange(ColituServerNames.Variants(end?.City));
+                texts.AddRange(ColituServerNames.Variants(end?.Name, end?.Country));
+                texts.AddRange(CountryNames(end?.Country));
+            }
+        }
+        return ColituServerNames.Matches(query, texts);
     }
+
+    private static IEnumerable<string?> CountryNames(string? code) =>
+        new[] { "ru", "tr", "en" }.Select(language => ColituServerNames.CountryName(code, language));
 
     /// <summary>"Best server"; with <paramref name="recommended"/> (the server it connects to first) named under it.</summary>
     public static ColituServerRow Auto(string? recommended = null) => new()
@@ -518,15 +540,17 @@ public sealed class ColituServerRow
         {
             return FromRoute(server, ping);
         }
-        var country = CountryName(server.CountryCode) ?? server.Country;
-        var name = FirstNonEmpty(server.DisplayName, server.Name, country, "Colitu");
+        var country = CountryName(server.CountryCode) ?? ColituServerNames.DisplayName(server.Country);
+        // The panel writes names and cities in Turkish: shown in the app language when the tables know them.
+        var name = FirstNonEmpty(ColituServerNames.DisplayName(FirstNonEmpty(server.DisplayName, server.Name), server.CountryCode), country, "Colitu");
+        var cityName = ColituServerNames.City(server.City);
         var categories = server.Categories.Count == 0 ? [] : new[] { string.Join(", ", server.Categories.Select(category => Loc.Has("cat." + category) ? Loc.I.Get("cat." + category) : category)) };
         var title = name;
-        var lead = new[] { country, server.City };
+        var lead = new[] { country, cityName };
         if (city)
         {
             // Under its country header: the city names the row; the full name only if it adds something (e.g. "Letonya (Köprü)").
-            title = FirstNonEmpty(server.City, name);
+            title = FirstNonEmpty(cityName, name);
             lead = [name, null];
         }
         var details = lead
@@ -558,10 +582,10 @@ public sealed class ColituServerRow
     /// <summary>"FI → DE  Helsinki → Frankfurt": both flags, the route's name and the countries.</summary>
     private static ColituServerRow FromRoute(ColituVpnServer route, int? ping)
     {
-        var entry = CountryName(route.Entry?.Country) ?? route.Entry?.Label ?? "";
-        var exit = CountryName(route.Exit?.Country) ?? route.Exit?.Label ?? "";
-        var name = FirstNonEmpty(route.DisplayName, route.Name,
-            string.Join(" → ", new[] { route.Entry?.Label, route.Exit?.Label }.Where(value => !string.IsNullOrWhiteSpace(value))), "Colitu");
+        var entry = CountryName(route.Entry?.Country) ?? ColituServerNames.DisplayName(route.Entry?.Label);
+        var exit = CountryName(route.Exit?.Country) ?? ColituServerNames.DisplayName(route.Exit?.Label);
+        var name = FirstNonEmpty(ColituServerNames.Route(FirstNonEmpty(route.DisplayName, route.Name,
+            string.Join(" → ", new[] { route.Entry?.Label, route.Exit?.Label }.Where(value => !string.IsNullOrWhiteSpace(value))))), "Colitu");
         return new ColituServerRow
         {
             Server = route,
@@ -581,83 +605,7 @@ public sealed class ColituServerRow
     }
 
     /// <summary>Country name in the app language; English from .NET for the rest.</summary>
-    public static string? CountryName(string? code)
-    {
-        code = (code ?? "").Trim().ToUpperInvariant();
-        if (code == "UK") code = "GB";
-        if (code.Length != 2)
-        {
-            return null;
-        }
-        if (Countries.TryGetValue(code, out var names))
-        {
-            return Loc.I.Language switch { "ru" => names[0], "tr" => names[1], _ => names[2] };
-        }
-        try
-        {
-            return new RegionInfo(code).EnglishName;
-        }
-        catch (ArgumentException)
-        {
-            return code;
-        }
-    }
-
-    // code → [ru, tr, en]
-    private static readonly Dictionary<string, string[]> Countries = new()
-    {
-        ["AE"] = ["ОАЭ", "BAE", "United Arab Emirates"],
-        ["AL"] = ["Албания", "Arnavutluk", "Albania"],
-        ["AM"] = ["Армения", "Ermenistan", "Armenia"],
-        ["AT"] = ["Австрия", "Avusturya", "Austria"],
-        ["AU"] = ["Австралия", "Avustralya", "Australia"],
-        ["AZ"] = ["Азербайджан", "Azerbaycan", "Azerbaijan"],
-        ["BE"] = ["Бельгия", "Belçika", "Belgium"],
-        ["BG"] = ["Болгария", "Bulgaristan", "Bulgaria"],
-        ["BR"] = ["Бразилия", "Brezilya", "Brazil"],
-        ["BY"] = ["Беларусь", "Belarus", "Belarus"],
-        ["CA"] = ["Канада", "Kanada", "Canada"],
-        ["CH"] = ["Швейцария", "İsviçre", "Switzerland"],
-        ["CY"] = ["Кипр", "Kıbrıs", "Cyprus"],
-        ["CZ"] = ["Чехия", "Çekya", "Czechia"],
-        ["DE"] = ["Германия", "Almanya", "Germany"],
-        ["DK"] = ["Дания", "Danimarka", "Denmark"],
-        ["EE"] = ["Эстония", "Estonya", "Estonia"],
-        ["ES"] = ["Испания", "İspanya", "Spain"],
-        ["FI"] = ["Финляндия", "Finlandiya", "Finland"],
-        ["FR"] = ["Франция", "Fransa", "France"],
-        ["GB"] = ["Великобритания", "Birleşik Krallık", "United Kingdom"],
-        ["GE"] = ["Грузия", "Gürcistan", "Georgia"],
-        ["GR"] = ["Греция", "Yunanistan", "Greece"],
-        ["HK"] = ["Гонконг", "Hong Kong", "Hong Kong"],
-        ["HU"] = ["Венгрия", "Macaristan", "Hungary"],
-        ["IE"] = ["Ирландия", "İrlanda", "Ireland"],
-        ["IL"] = ["Израиль", "İsrail", "Israel"],
-        ["IN"] = ["Индия", "Hindistan", "India"],
-        ["IS"] = ["Исландия", "İzlanda", "Iceland"],
-        ["IT"] = ["Италия", "İtalya", "Italy"],
-        ["JP"] = ["Япония", "Japonya", "Japan"],
-        ["KR"] = ["Южная Корея", "Güney Kore", "South Korea"],
-        ["KZ"] = ["Казахстан", "Kazakistan", "Kazakhstan"],
-        ["LT"] = ["Литва", "Litvanya", "Lithuania"],
-        ["LU"] = ["Люксембург", "Lüksemburg", "Luxembourg"],
-        ["LV"] = ["Латвия", "Letonya", "Latvia"],
-        ["MD"] = ["Молдова", "Moldova", "Moldova"],
-        ["NL"] = ["Нидерланды", "Hollanda", "Netherlands"],
-        ["NO"] = ["Норвегия", "Norveç", "Norway"],
-        ["PL"] = ["Польша", "Polonya", "Poland"],
-        ["PT"] = ["Португалия", "Portekiz", "Portugal"],
-        ["RO"] = ["Румыния", "Romanya", "Romania"],
-        ["RS"] = ["Сербия", "Sırbistan", "Serbia"],
-        ["RU"] = ["Россия", "Rusya", "Russia"],
-        ["SE"] = ["Швеция", "İsveç", "Sweden"],
-        ["SG"] = ["Сингапур", "Singapur", "Singapore"],
-        ["SK"] = ["Словакия", "Slovakya", "Slovakia"],
-        ["TR"] = ["Турция", "Türkiye", "Türkiye"],
-        ["UA"] = ["Украина", "Ukrayna", "Ukraine"],
-        ["US"] = ["США", "ABD", "United States"],
-        ["UZ"] = ["Узбекистан", "Özbekistan", "Uzbekistan"],
-    };
+    public static string? CountryName(string? code) => ColituServerNames.CountryName(code);
 
     private static string FirstNonEmpty(params string?[] values) => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "";
 }

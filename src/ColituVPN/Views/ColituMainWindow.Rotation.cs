@@ -50,7 +50,15 @@ public partial class ColituMainWindow
         RouteChipText.Text = text?.ToUpper(Loc.I.Culture) ?? "";
     }
 
-    private static string RouteEndText(ColituRouteEndpoint? end) => end?.Country ?? end?.Label ?? "?";
+    private static string RouteEndText(ColituRouteEndpoint? end)
+    {
+        if (end?.Country is { } country)
+        {
+            return country;
+        }
+        var label = ColituServerNames.DisplayName(end?.Label);
+        return label.Length > 0 ? label : "?";
+    }
 
     private string? RotationText()
     {
@@ -58,9 +66,10 @@ public partial class ColituMainWindow
         {
             return null;
         }
+        var exitName = ColituServerNames.DisplayName(exit.Label, exit.Country);
         var label = exit.Country is { Length: 2 } country && !string.Equals(exit.Label, country, StringComparison.OrdinalIgnoreCase)
-            ? $"{exit.Label} ({country})"
-            : exit.Label;
+            ? $"{exitName} ({country})"
+            : exitName;
         var left = next - DateTimeOffset.UtcNow;
         return left > TimeSpan.Zero
             ? Loc.I.Format("rotation.home", ("exit", label), ("time", ColituRotation.FormatCountdown(left)))
