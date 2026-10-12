@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <None Include="TestData\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="TestData\*.db" CopyToOutputDirectory="PreserveNewest" />
     <None Include="TestData\roots\*.pem" CopyToOutputDirectory="PreserveNewest" />
     <None Include="TestData\rootconfig\*.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\scripts\colitu-core-root" Link="TestData\colitu-core-root" CopyToOutputDirectory="PreserveNewest" />

@@ -107,6 +107,47 @@ public static class ColituLatency
             .ToList();
     }
 
+    /// <summary>
+    /// The targets kept by <see cref="SaveTargets"/>, filtered as <see cref="ResolveTargetsAsync"/>
+    /// filters (public IPv4, at most 256); empty when there is no readable file.
+    /// </summary>
+    public static IReadOnlyList<string> LoadTargets(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return [];
+            }
+            var values = System.Text.Json.JsonSerializer.Deserialize<string[]>(File.ReadAllText(path)) ?? [];
+            return values
+                .Select(value => IPAddress.TryParse(value, out var address) ? address : null)
+                .OfType<IPAddress>()
+                .Where(address => address.AddressFamily == AddressFamily.InterNetwork && IsPublic(address))
+                .Select(address => address.ToString())
+                .Distinct()
+                .Take(256)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Keeps <paramref name="targets"/> (owner-only file) for the next start; a failure only costs the rule at the next automatic connect.</summary>
+    public static void SaveTargets(string path, IEnumerable<string> targets)
+    {
+        try
+        {
+            ColituHardening.WritePrivateText(path, System.Text.Json.JsonSerializer.Serialize(targets.Distinct().Take(256).ToArray()));
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituLatency.SaveTargets: {ex.GetType().Name}");
+        }
+    }
+
     /// <summary>The server has a probe address: a missing result from <see cref="MeasureAllAsync"/> means the ping failed.</summary>
     public static bool CanProbe(ColituVpnServer server) =>
         server.Id.IsNotEmpty() && server.Port is { } port && ProbeAllowed(server.Host, port);

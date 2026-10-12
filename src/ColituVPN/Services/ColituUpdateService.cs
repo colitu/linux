@@ -212,6 +212,22 @@ public sealed class ColituUpdateService
         var updateDir = ColituHardening.CreateProtectedDirectory(Path.Combine(Utils.StartupPath(), UpdateFolderName));
         var destPath = Path.Combine(updateDir, $"colitu-vpn-{info.VersionCode}.{info.PackageKind}");
 
+        try
+        {
+            await DownloadToAsync(info, destPath, progress, cancellationToken);
+            VerifySha256(destPath, info.Sha256);
+        }
+        catch
+        {
+            // A cancelled, broken or wrong download is never kept (up to 100 MB).
+            try { File.Delete(destPath); } catch { }
+            throw;
+        }
+        info.LocalPath = destPath;
+    }
+
+    private async Task DownloadToAsync(ColituUpdateInfo info, string destPath, IProgress<ColituDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
         using var response = await SendCheckedAsync(_downloadClient, new Uri(info.DownloadUrl), null, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -246,9 +262,6 @@ public sealed class ColituUpdateService
                 }
             }
         }
-
-        VerifySha256(destPath, info.Sha256);
-        info.LocalPath = destPath;
     }
 
     /// <summary>
@@ -481,11 +494,44 @@ public sealed class ColituUpdateService
 
     private static void ClearCompletedAttempt()
     {
+        DeleteStalePackages(Path.Combine(Utils.StartupPath(), UpdateFolderName), LocalVersionCode);
         var state = LoadUpdateState();
         if (state == null) return;
         if (LocalVersionCode >= state.AttemptedVersionCode || DateTimeOffset.Now - state.AttemptedAt >= AttemptCooldown)
         {
             try { File.Delete(StatePath()); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Packages of a version this app already is (or is newer than) stay in <paramref name="folder"/>
+    /// when an install failed or the app was updated another way, and an interrupted download of an
+    /// older run may be there too: up to 100 MB each, never needed again.
+    /// </summary>
+    internal static void DeleteStalePackages(string folder, int localVersionCode)
+    {
+        try
+        {
+            if (!Directory.Exists(folder))
+            {
+                return;
+            }
+            foreach (var file in Directory.EnumerateFiles(folder, "colitu-vpn-*.*"))
+            {
+                var name = Path.GetFileName(file);
+                var dot = name.LastIndexOf('.');
+                var extension = dot > 0 ? name[(dot + 1)..] : "";
+                var code = dot > 0 ? name["colitu-vpn-".Length..dot] : "";
+                if (extension is "deb" or "rpm"
+                    && int.TryParse(code, NumberStyles.None, CultureInfo.InvariantCulture, out var version) && version <= localVersionCode)
+                {
+                    File.Delete(file);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituUpdateService.DeleteStalePackages: {ex.GetType().Name}");
         }
     }
 
