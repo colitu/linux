@@ -25,6 +25,10 @@ public record CoreConfigContext
     public bool IsWindows { get; init; }
     public bool IsMacOS { get; init; }
 
+    // TUN outside Windows: the core runs as root through colitu-core-root, which refuses log files,
+    // cache files outside its working folder and rule sets outside the install folder (RootConfigPolicy).
+    public bool RunsCoreAsRoot => IsTunEnabled && !IsWindows;
+
     // Defaults to true so that a context built without this flag keeps routing IPv6 into the
     // tunnel; only a positive detection of the host having no global IPv6 address turns it off.
     public bool HasGlobalIPv6Address { get; init; } = true;

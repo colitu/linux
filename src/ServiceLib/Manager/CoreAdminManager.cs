@@ -40,21 +40,33 @@ public class CoreAdminManager
             throw new UnauthorizedAccessException(RootCoreRefusedMessage);
         }
 
+        // sudo runs the root-owned launcher (scripts/colitu-core-root) next to the cores. It copies the
+        // config out of the user's data folder into /run/colitu-vpn, has the core print it in
+        // canonical form, refuses log/cache files, file paths and rule sets outside the install
+        // folder (RootConfigPolicy), and starts the core with a clean environment that reads the
+        // geo files from the install folder. Nothing root reads stays in the user's folder.
+        var launcher = RootCoreGuard.ResolveLauncher(out var launcherReason);
+        var kind = RootConfigPolicy.KindOf(rootCore);
+        if (launcher == null || kind == null)
+        {
+            Logging.SaveLog($"{_tag}: core not run as root ({launcherReason}{(kind == null ? $"; {Path.GetFileName(rootCore)} is not run as root" : "")})");
+            throw new UnauthorizedAccessException(RootCoreRefusedMessage);
+        }
+        var configFile = Utils.GetBinConfigPath(configPath);
+        // The same check the launcher makes, here first for a readable error.
+        if (!RootConfigPolicy.Check(File.ReadAllText(configFile), kind, Path.GetDirectoryName(launcher) ?? "", out var configReason))
+        {
+            Logging.SaveLog($"{_tag}: config not run as root ({configReason})");
+            throw new UnauthorizedAccessException($"{RootConfigPolicy.RefusedMarker}: {configReason}");
+        }
+
         // sudo is started directly with the command as arguments (no shell script in the user's
         // data folder that something running as the user could swap to read the password).
-        var args = new StringBuilder("-S -- ");
-        // Passing environment variables to the sudo command, here it only xray or sing-box.
-        var envArgs = coreInfo.Environment.Where(kv => kv.Value.IsNotEmpty()).Select(kv => $"{kv.Key}={kv.Value.AppendQuotes()}").ToList();
-        if (envArgs.Count > 0)
-        {
-            args.Append("env ").Append(string.Join(" ", envArgs)).Append(' ');
-        }
-        args.Append(rootCore.AppendQuotes()).Append(' ')
-            .Append(string.Format(coreInfo.Arguments, Utils.GetBinConfigPath(configPath).AppendQuotes()));
+        var args = $"-S -- {launcher.AppendQuotes()} {rootCore.AppendQuotes()} {configFile.AppendQuotes()}";
 
         var procService = new ProcessService(
             fileName: SudoPath(),
-            arguments: args.ToString(),
+            arguments: args,
             workingDirectory: Utils.GetBinConfigPath(),
             displayLog: true,
             redirectInput: true,

@@ -76,6 +76,14 @@ public partial class CoreConfigSingboxService
                     });
                 }
 
+                // Colitu: the app's own server ping (TCP connect to the nodes' ports) measures the
+                // network, not the tunnel: first rule, ahead of every other one. The root sing-box
+                // finds the process of a TUN connection through /proc (it can read the app's fds).
+                if (BuildColituPingDirectRule() is { } pingRule)
+                {
+                    _coreConfig.route.rules.Insert(0, pingRule);
+                }
+
                 var lstDirectExe = BuildRoutingDirectExe();
                 if (lstDirectExe.Count > 0)
                 {
@@ -307,6 +315,39 @@ public partial class CoreConfigSingboxService
         return IPAddress.TryParse(addr, out var ip)
             ? $"{addr}/{(ip.AddressFamily == AddressFamily.InterNetworkV6 ? 128 : 32)}"
             : address;
+    }
+
+    /// <summary>
+    /// TCP from the Colitu app to the ping ports goes out direct; null without a direct outbound or
+    /// when the app runs under the shared dotnet host (its path would match every .NET program).
+    /// </summary>
+    internal Rule4Sbox? BuildColituPingDirectRule(string? appPath = null)
+    {
+        if (!_coreConfig.outbounds.Any(o => o.tag == Global.DirectTag))
+        {
+            return null;
+        }
+        appPath ??= Utils.GetExePath();
+        if (appPath.IsNullOrEmpty())
+        {
+            return null;
+        }
+        // sing-box compares with the resolved executable (/proc/<pid>/exe).
+        if (!Utils.IsWindows())
+        {
+            appPath = RootCoreGuard.RealPath(appPath) ?? appPath;
+        }
+        if (Path.GetFileNameWithoutExtension(appPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return new Rule4Sbox
+        {
+            process_path = [appPath],
+            network = ["tcp"],
+            port = [.. Global.ColituPingPorts],
+            outbound = Global.DirectTag,
+        };
     }
 
     private List<string> BuildRoutingDirectExe()

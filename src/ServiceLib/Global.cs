@@ -86,6 +86,12 @@ public class Global
     /// kill switch lets this mark through; only a root process (the TUN core) can set it.
     /// </summary>
     public const int LinuxTunDirectRoutingMark = 0x434c;
+
+    /// <summary>
+    /// Ports the app's own server ping (TCP connect, ColituLatency) may use. In TUN mode these
+    /// connections of the app go out directly (first sing-box route rule), not through the tunnel.
+    /// </summary>
+    public static readonly int[] ColituPingPorts = [443, 2053, 2083, 2087, 2096, 3443, 4433, 7443, 8388, 8443, 9443];
     public const string RoutingRuleComma = "<COMMA>";
     public const string GrpcGunMode = "gun";
     public const string GrpcMultiMode = "multi";

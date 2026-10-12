@@ -6,7 +6,8 @@ public partial class CoreConfigV2rayService
     {
         try
         {
-            if (_config.CoreBasicItem.LogEnabled)
+            // A core running as root (TUN) gets no log files: colitu-core-root refuses them.
+            if (_config.CoreBasicItem.LogEnabled && !context.RunsCoreAsRoot)
             {
                 var dtNow = DateTime.Now;
                 _coreConfig.log.loglevel = _config.CoreBasicItem.Loglevel;

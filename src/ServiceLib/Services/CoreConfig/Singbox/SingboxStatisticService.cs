@@ -22,7 +22,8 @@ public partial class CoreConfigSingboxService
             _coreConfig.experimental.cache_file = new CacheFile4Sbox()
             {
                 enabled = true,
-                path = Utils.GetBinPath("cache.db"),
+                // As root (TUN) the cache lives in colitu-core-root's working folder (/run/colitu-vpn).
+                path = context.RunsCoreAsRoot ? "cache.db" : Utils.GetBinPath("cache.db"),
                 store_fakeip = context.SimpleDnsItem.FakeIP == true
             };
         }

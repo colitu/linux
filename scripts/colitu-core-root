@@ -1,0 +1,211 @@
+#!/bin/sh
+# colitu-core-root: starts Colitu VPN's core (Xray or sing-box) as root for TUN mode.
+#
+# Installed root:root 0755 next to the cores (/opt/colitu-vpn/bin/colitu-core-root); the app runs
+#   sudo -S -- /opt/colitu-vpn/bin/colitu-core-root <core in this folder> <config.json>
+# after checking that this file and every folder above it belong to root (RootCoreGuard).
+#
+# The config comes from the user's data folder, which anything running as the user can change.
+# Root never reads it in place: it is copied (no symlinks, at most 4 MiB) into /run/colitu-vpn
+# (root:root 0700). The core itself parses the copy and prints it in canonical form
+# (`sing-box format`, `xray run -dump`): comments gone, escapes decoded, key case folded, one
+# member per line. Every line of that output must match the strict grammar below, and then:
+#   - no log file (sing-box log.output; Xray log.access/log.error only "" or "none"),
+#   - no file path: a value starting with "/", "@" (abstract socket) or "~", or with a ".."
+#     segment, is refused, except URL paths (transport/DoH/HTTP "path", Xray "serviceName"),
+#     sing-box process_path match rules, and sing-box local rule sets inside this folder,
+#   - relative paths (cache_file "cache.db") resolve in /run/colitu-vpn, the core's working folder,
+#   - no sing-box "tor" outbound (it starts an external program), Xray "ext:" files only by name.
+# The core then runs the root-owned copy that was checked, with a clean environment; Xray reads
+# geoip.dat/geosite.dat from this folder (XRAY_LOCATION_ASSET), never from the user's folder.
+#
+# The same rules are in ServiceLib/Common/RootConfigPolicy.cs (the app checks before asking
+# sudo, for a readable error); ColituRootConfigPolicyTests runs both on the same samples.
+#
+#   colitu-core-root --policy <xray|sing-box> <install-bin> <canonical.json>
+# only runs the rule check on an already canonical file (no root, nothing written): for tests.
+
+set -u
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LC_ALL=C
+export PATH LC_ALL
+
+WORK=/run/colitu-vpn
+MAX_BYTES=4194304
+
+refuse() {
+  printf 'colitu-core-root: refused: %s\n' "$*" >&2
+  exit 3
+}
+
+# Rule check on the canonical output ($3) for core kind $1 with install bin $2. Prints the reason
+# and fails when the config is refused. POSIX awk only (mawk, gawk, busybox).
+policy() {
+  awk -v kind="$1" -v here="$2" '
+function fail(msg) { print "line " NR ": " msg; bad = 1; exit 1 }
+# A file or socket path: absolute, abstract socket, home, or a ".." segment.
+function pathlike(v) { return v ~ /^[\/@~]/ || v ~ /(^|\/)\.\.(\/|$)/ }
+function inhere(v) { return substr(v, 1, length(here) + 1) == here "/" && v !~ /(^|\/)\.\.?(\/|$)/ }
+function check(k, v,    lower) {
+  if (kind == "sing-box") {
+    if (k == "type" && v == "tor") fail("tor outbound")
+    if (k == "output") { if (v != "") fail("log file"); return }
+    if (k == "process_path" || k == "process_path_regex") return
+    if (k == "path") {
+      # URL paths: v2ray transports, DNS over HTTPS/HTTP3 servers, HTTP proxy outbounds.
+      if (ckey[depth] == "transport" || ctype[depth] ~ /^(https|h3|http)$/) return
+      # Local rule sets: only the ones shipped in the root-owned install folder.
+      if (ckey[depth] == "[]" && depth > 1 && ckey[depth - 1] == "rule_set" && pathlike(v)) {
+        if (!inhere(v)) fail("rule set outside the install folder")
+        return
+      }
+    }
+  } else {
+    if ((k == "access" || k == "error") && ckey[depth] == "log" && v != "" && v != "none") fail("log file")
+    lower = tolower(v)
+    if (lower ~ /^ext[:-]/ &&(v ~ /[\/\\]/ || v ~ /\.\./)) fail("ext: file outside the asset folder")
+    if (k == "path" || k == "serviceName") return
+  }
+  if (pathlike(v)) fail("file path in \"" k "\"")
+}
+BEGIN {
+  if (kind != "xray" && kind != "sing-box") { print "unknown core"; bad = 1; exit 1 }
+  if (here !~ /^\//) { print "install folder is not absolute"; bad = 1; exit 1 }
+  depth = 0; seen = 0
+}
+{
+  line = $0
+  sub(/^[ \t]+/, "", line)
+  sub(/[ \t\r]+$/, "", line)
+  if (line == "") next
+  # Escapes the core decodes would hide a "/" or a key from the line checks: "\/" and escaped
+  # printable ASCII. Go itself only writes \u0026, \u003c and \u003e.
+  if (line ~ /\\\//) fail("escaped slash")
+  probe = line
+  gsub(/\\u00(26|3[cC]|3[eE])/, "", probe)
+  if (probe ~ /\\u00[2-7][0-9a-fA-F]/) fail("escaped character")
+
+  haskey = 0; key = ""; rest = line
+  if (match(rest, /^"(\\.|[^"\\])*"[ ]*:[ ]*/)) {
+    head = substr(rest, 1, RLENGTH)
+    rest = substr(rest, RLENGTH + 1)
+    sub(/[ ]*:[ ]*$/, "", head)
+    key = substr(head, 2, length(head) - 2)
+    haskey = 1
+  }
+  seen = 1
+  if (rest == "{" || rest == "[") {
+    if (depth == 0 ? (haskey || rest != "{" || started) : (haskey == isarr[depth])) fail("unexpected line")
+    started = 1
+    depth++
+    ckey[depth] = haskey ? key : "[]"
+    ctype[depth] = ""
+    isarr[depth] = (rest == "[")
+    next
+  }
+  if (rest ~ /^[}\]],?$/) {
+    if (haskey || depth == 0 || (substr(rest, 1, 1) == "]") != isarr[depth]) fail("unexpected line")
+    depth--
+    next
+  }
+  if (depth == 0 || haskey == isarr[depth]) fail("unexpected line")
+  sub(/,$/, "", rest)
+  if (rest ~ /^"(\\.|[^"\\])*"$/) {
+    value = substr(rest, 2, length(rest) - 2)
+    effkey = haskey ? key : ckey[depth]
+    if (haskey && key == "type") ctype[depth] = value
+    check(effkey, value)
+    next
+  }
+  if (rest ~ /^-?[0-9][0-9.eE+-]*$/ || rest == "true" || rest == "false" || rest == "null" || rest == "{}" || rest == "[]") next
+  fail("unexpected line")
+}
+END {
+  if (bad) exit 1
+  if (!seen || !started || depth != 0) { print "incomplete config"; exit 1 }
+}
+' "$3"
+}
+
+# Owner uid 0 and no group/other write bit, for each path from $1 up to "/".
+root_owned_chain() {
+  p=$1
+  while :; do
+    set -- $(stat -c '%u %a' -- "$p" 2>/dev/null) || return 1
+    [ "${1:-x}" = 0 ] || return 1
+    [ $(( 0${2:-777} & 022 )) -eq 0 ] || return 1
+    [ "$p" = / ] && return 0
+    p=${p%/*}
+    [ -n "$p" ] || p=/
+  done
+}
+
+if [ "${1:-}" = "--policy" ]; then
+  [ "$#" -eq 4 ] || refuse "usage: --policy <xray|sing-box> <install-bin> <canonical.json>"
+  policy "$2" "$3" "$4"
+  exit $?
+fi
+
+[ "$#" -eq 2 ] || refuse "usage: colitu-core-root <core> <config.json>"
+core=$1
+config=$2
+[ "$(id -u)" = 0 ] || refuse "not running as root"
+
+case $0 in
+  /*) ;;
+  *) refuse "not started by its absolute path" ;;
+esac
+here=$(cd -P -- "${0%/*}" && pwd -P) || refuse "install folder not found"
+case $core in
+  "$here"/*) ;;
+  *) refuse "the core is not in $here" ;;
+esac
+case $core in
+  */../*|*/./*|*//*) refuse "the core path is not canonical" ;;
+esac
+[ -f "$core" ] && [ ! -L "$core" ] && [ -x "$core" ] || refuse "the core is missing: $core"
+root_owned_chain "$core" || refuse "the core or a folder above it is not root-owned and protected: $core"
+case ${core##*/} in
+  sing-box|sing-box-client) kind=sing-box ;;
+  xray) kind=xray ;;
+  *) refuse "unknown core ${core##*/}" ;;
+esac
+
+name=${config##*/}
+case $name in
+  ''|*[!A-Za-z0-9._-]*|.*) refuse "bad config file name" ;;
+  *.json) ;;
+  *) refuse "bad config file name" ;;
+esac
+[ -f "$config" ] && [ ! -L "$config" ] || refuse "the config is not a regular file"
+
+# Root-only working folder (/run is root's: nobody else can plant anything there).
+if [ -L "$WORK" ] || { [ -e "$WORK" ] && [ ! -d "$WORK" ]; }; then
+  rm -f -- "$WORK" || refuse "cannot reset $WORK"
+fi
+mkdir -p -- "$WORK" && chown 0:0 -- "$WORK" && chmod 0700 -- "$WORK" || refuse "cannot create $WORK"
+[ "$(stat -c '%u %a' -- "$WORK")" = "0 700" ] || refuse "$WORK is not root:root 0700"
+cd "$WORK" || refuse "cannot enter $WORK"
+
+copy="$WORK/$name"
+canon="$WORK/$name.canonical"
+errs="$WORK/$name.err"
+rm -f -- "$copy" "$canon" "$errs"
+# iflag=nofollow: a symlink swapped in after the check above is not followed.
+dd if="$config" of="$copy" bs=4096 count=1025 iflag=nofollow 2>/dev/null || refuse "the config could not be read"
+size=$(wc -c < "$copy" | tr -d ' ')
+[ "${size:-0}" -gt 0 ] && [ "$size" -le "$MAX_BYTES" ] || refuse "the config is empty or larger than $MAX_BYTES bytes"
+
+case $kind in
+  sing-box) env -i PATH="$PATH" "$core" format -c "$copy" > "$canon" 2> "$errs" ;;
+  xray) env -i PATH="$PATH" XRAY_LOCATION_ASSET="$here" XRAY_LOCATION_CERT="$here" "$core" run -dump -c "$copy" > "$canon" 2> "$errs" ;;
+esac || refuse "the core cannot read the config: $(head -c 400 "$errs" | tr '\n' ' ')"
+
+reason=$(policy "$kind" "$here" "$canon") || refuse "${reason:-config not allowed}"
+rm -f -- "$canon" "$errs"
+
+case $kind in
+  sing-box) exec env -i PATH="$PATH" HOME=/root "$core" run -c "$copy" --disable-color ;;
+  xray) exec env -i PATH="$PATH" HOME=/root XRAY_LOCATION_ASSET="$here" XRAY_LOCATION_CERT="$here" "$core" run -c "$copy" ;;
+esac

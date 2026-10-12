@@ -521,7 +521,7 @@ cp -a * %{buildroot}/opt/colitu-vpn/
 find %{buildroot}/opt/colitu-vpn -type d -exec chmod 0755 {} +
 find %{buildroot}/opt/colitu-vpn -type f -exec chmod 0644 {} +
 [ -f %{buildroot}/opt/colitu-vpn/ColituVPN ] && chmod 0755 %{buildroot}/opt/colitu-vpn/ColituVPN || :
-find %{buildroot}/opt/colitu-vpn/bin -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} + 2>/dev/null || :
+find %{buildroot}/opt/colitu-vpn/bin -type f \( -name xray -o -name sing-box -o -name colitu-core-root \) -exec chmod 0755 {} + 2>/dev/null || :
 [ -f %{buildroot}/opt/colitu-vpn/AmazTool ] && chmod 0755 %{buildroot}/opt/colitu-vpn/AmazTool || :
 # TUN mode refuses cores that group/others can write: never ship one.
 if [ -n "$(find %{buildroot}/opt/colitu-vpn ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in /opt/colitu-vpn" >&2; exit 1; fi
@@ -618,6 +618,8 @@ package_binary() {
   cp "$icon_candidate" "$workdir/$PKGROOT/colitu-vpn.png"
 
   stage_runtime_assets "$workdir/$PKGROOT" "$rid"
+  # TUN mode: sudo runs this launcher (root:root 0755 in the package), never the core directly.
+  install -D -m 0755 "$SCRIPT_DIR/scripts/colitu-core-root" "$workdir/$PKGROOT/bin/colitu-core-root"
 
   rpmdev-setuptree
   sourcedir="${RPM_TOPDIR}/SOURCES"

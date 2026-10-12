@@ -60,11 +60,46 @@ public partial class ColituMainWindow
                 option.IsCheckedChanged += Category_Checked;
                 CategoryList.Children.Add(option);
             }
+            BuildSortFilter();
         }
         finally
         {
             _buildingCategories = false;
         }
+    }
+
+    /// <summary>Ping / name / load order of the list (ColituLocationSort), kept with the preferences.</summary>
+    private void BuildSortFilter()
+    {
+        LocationSortList.Children.Clear();
+        var current = _vpn.LocationSort;
+        foreach (var mode in ColituLocationSort.Modes)
+        {
+            var option = new RadioButton
+            {
+                Content = Loc.I["locations.sort." + mode],
+                GroupName = "LocationSort",
+                Tag = mode,
+                Theme = Resource<ControlTheme>("SegmentOption"),
+                IsChecked = mode == current,
+                MinHeight = 36,
+                FontSize = 13.5,
+                Padding = new Thickness(14, 0)
+            };
+            option.IsCheckedChanged += Sort_Checked;
+            LocationSortList.Children.Add(option);
+        }
+    }
+
+    private void Sort_Checked(object? sender, RoutedEventArgs e)
+    {
+        if (_buildingCategories || sender is not RadioButton { Tag: string mode, IsChecked: true } || mode == _vpn.LocationSort)
+        {
+            return;
+        }
+        _vpn.SetLocationSort(mode);
+        RenderServers();
+        ColituMotion.FadeIn(ServerList, 8);
     }
 
     private void Category_Checked(object? sender, RoutedEventArgs e)
@@ -121,7 +156,8 @@ public partial class ColituMainWindow
         var flat = query.Length > 0;
         var candidates = _servers.Where(server => (!filtered || server.Categories.Contains(_category))
             && (!flat || ColituServerRow.From(server).Matches(query)));
-        foreach (var group in ColituServerGroups.Build(candidates, ColituServerRow.CountryName, StringComparer.Create(Loc.I.Culture, true), flat))
+        var groups = ColituServerGroups.Build(candidates, ColituServerRow.CountryName, StringComparer.Create(Loc.I.Culture, true), flat);
+        foreach (var group in ColituLocationSort.Order(groups, _vpn.LocationSort, server => _pings.TryGetValue(server.Id ?? "", out var ping) ? ping : null))
         {
             if (group.IsSingle)
             {

@@ -199,6 +199,15 @@ public sealed class ColituVpnService
     /// Going Simple with a multihop route picked, the next connect uses the automatic choice; a live
     /// connection is not touched.
     /// </summary>
+    /// <summary>Order of the locations list (ping, name or load); kept with the other preferences.</summary>
+    public string LocationSort => ColituLocationSort.Normalize(_session.Preferences.LocationSort);
+
+    public void SetLocationSort(string mode)
+    {
+        _session = _session with { Preferences = _session.Preferences with { LocationSort = ColituLocationSort.Normalize(mode) } };
+        SaveState();
+    }
+
     public void SetAdvancedMode(bool advanced)
     {
         _session = _session with { Preferences = _session.Preferences with { AdvancedMode = advanced } };
@@ -3300,7 +3309,8 @@ public sealed class ColituVpnService
                 return reason;
             }
         }
-        return null;
+        // sudo starts the cores through the root-owned launcher that checks their config.
+        return RootCoreGuard.ResolveLauncher(out var launcherReason) == null ? launcherReason : null;
     }
 
     /// <summary>True when connecting now would ask for the sudo password first (not when TUN is refused anyway).</summary>
@@ -3700,6 +3710,7 @@ public sealed class ColituVpnService
         if (ex is ColituApiException api) return IsNetworkFailure(api) ? loc["err.network"] : api.Message;
         if (IsNetworkFailure(ex)) return loc["err.network"];
         var message = ex.Message;
+        if (message.Contains(RootConfigPolicy.RefusedMarker, StringComparison.Ordinal)) return loc["err.tunConfig"];
         if (message.Contains("core executable", StringComparison.OrdinalIgnoreCase)) return loc["err.core"];
         if (message.Contains("adapter or route", StringComparison.OrdinalIgnoreCase)) return loc["err.tun"];
         if (message.Contains("still in use", StringComparison.OrdinalIgnoreCase)) return loc["err.port"];
@@ -4175,7 +4186,9 @@ public sealed record ColituVpnPreferences(
     // Advanced mode shows split tunnelling, connection mode, kill switch and the other expert settings.
     // On here, so users updating from a version without the setting keep what they saw; new installs
     // start in Simple mode (ForNewInstall).
-    bool AdvancedMode = true)
+    bool AdvancedMode = true,
+    // Order of the locations list (ColituLocationSort): ping, name or load.
+    string LocationSort = ColituLocationSort.Name)
 {
     /// <summary>
     /// Preferences of a first run (no saved state yet): privacy mode on, Simple mode. The record
@@ -4202,7 +4215,8 @@ public sealed record ColituVpnPreferences(
             SplitTunnelMode = splitMode,
             SplitTunnelingEnabled = splitMode != ColituSplitTunnelModes.Off,
             Language = language,
-            ConnectionMode = connectionMode
+            ConnectionMode = connectionMode,
+            LocationSort = ColituLocationSort.Normalize(LocationSort)
         };
     }
 

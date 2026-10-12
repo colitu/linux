@@ -639,6 +639,8 @@ package_binary() {
   [[ -f "$icon_candidate" ]] && cp "$icon_candidate" "$stage/usr/share/pixmaps/colitu-vpn.png" || true
 
   stage_runtime_assets "$stage/opt/colitu-vpn" "$rid"
+  # TUN mode: sudo runs this launcher (root:root 0755 in the package), never the core directly.
+  install -D -m 0755 "$SCRIPT_DIR/scripts/colitu-core-root" "$stage/opt/colitu-vpn/bin/colitu-core-root"
   write_launcher_file "$stage"
   write_desktop_file "$stage"
   write_maintainer_scripts "$debian_dir"
@@ -715,7 +717,7 @@ EOF
   find "$stage/opt/colitu-vpn" -type d -exec chmod 0755 {} +
   find "$stage/opt/colitu-vpn" -type f -exec chmod 0644 {} +
   [[ -f "$stage/opt/colitu-vpn/ColituVPN" ]] && chmod 0755 "$stage/opt/colitu-vpn/ColituVPN" || true
-  find "$stage/opt/colitu-vpn/bin" -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} + 2>/dev/null || true
+  find "$stage/opt/colitu-vpn/bin" -type f \( -name xray -o -name sing-box -o -name colitu-core-root \) -exec chmod 0755 {} + 2>/dev/null || true
   [[ -f "$stage/opt/colitu-vpn/AmazTool" ]] && chmod 0755 "$stage/opt/colitu-vpn/AmazTool" || true
   # TUN mode refuses cores that group/others can write: never ship one.
   if [ -n "$(find "$stage/opt/colitu-vpn" ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in /opt/colitu-vpn" >&2; exit 1; fi

@@ -23,7 +23,7 @@ public static class ColituLatency
     internal const int Parallel = 8;
 
     /// <summary>Ports a node's probe may use: the transports' TLS-style ports and the usual alternatives.</summary>
-    internal static readonly IReadOnlySet<int> AllowedPorts = new HashSet<int> { 443, 2053, 2083, 2087, 2096, 3443, 4433, 7443, 8388, 8443, 9443 };
+    internal static readonly IReadOnlySet<int> AllowedPorts = new HashSet<int>(Global.ColituPingPorts);
     private const int SolSocket = 1;
     private const int SoBindToDevice = 25;
 

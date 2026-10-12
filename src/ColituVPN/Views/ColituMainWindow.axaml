@@ -1629,14 +1629,31 @@
                                 </Grid>
                             </Border>
                         </Grid>
-                        <Border
-                            x:Name="CategoryHost"
+                        <Grid
                             Grid.Row="1"
                             Margin="0,0,0,16"
-                            HorizontalAlignment="Left"
-                            Classes="segmentHost">
-                            <StackPanel x:Name="CategoryList" Orientation="Horizontal" />
-                        </Border>
+                            ColumnDefinitions="*,Auto">
+                            <Border
+                                x:Name="CategoryHost"
+                                HorizontalAlignment="Left"
+                                Classes="segmentHost">
+                                <StackPanel x:Name="CategoryList" Orientation="Horizontal" />
+                            </Border>
+                            <StackPanel
+                                Grid.Column="1"
+                                Margin="12,0,0,0"
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="10">
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Classes="muted"
+                                    Text="{s:T locations.sortTitle}" />
+                                <Border Classes="segmentHost">
+                                    <StackPanel x:Name="LocationSortList" Orientation="Horizontal" />
+                                </Border>
+                            </StackPanel>
+                        </Grid>
                         <Panel Grid.Row="2">
                             <ListBox
                                 x:Name="ServerList"

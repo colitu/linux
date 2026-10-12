@@ -104,6 +104,41 @@ public static class RootCoreGuard
         return IsRootOwnedChain(real, stat, out reason) ? real : null;
     }
 
+    /// <summary>
+    /// The launcher sudo runs (scripts/colitu-core-root, installed root:root 0755 in the install bin):
+    /// it copies and checks the config (RootConfigPolicy) before starting the core as root.
+    /// </summary>
+    public const string LauncherName = "colitu-core-root";
+
+    /// <summary>
+    /// The launcher root may run: the install folder's colitu-core-root with every symlink resolved,
+    /// after the same ownership check as the cores. Null (with the reason) when missing or not safe.
+    /// </summary>
+    public static string? ResolveLauncher(out string reason) =>
+        ResolveLauncher(Utils.GetBaseDirectory("bin"), RealPath, StatPath, out reason);
+
+    public static string? ResolveLauncher(string installBin, Func<string, string?> realPath, StatFunc stat, out string reason)
+    {
+        var candidate = installBin.TrimEnd('/') + "/" + LauncherName;
+        var real = realPath(candidate);
+        if (real == null)
+        {
+            reason = $"{candidate}: not found in the install folder";
+            return null;
+        }
+        return IsRootOwnedChain(real, stat, out reason) ? real : null;
+    }
+
+    /// <summary>
+    /// The install bin as the launcher sees it (symlinks resolved): root-run configs name the rule
+    /// sets shipped there. Windows and unreadable paths keep the plain install path.
+    /// </summary>
+    public static string InstallBin()
+    {
+        var bin = Utils.GetBaseDirectory("bin").TrimEnd('/', '\\');
+        return Utils.IsWindows() ? bin : RealPath(bin) ?? bin;
+    }
+
     /// <summary>The path with every symlink resolved (each component, like realpath(3)); null on failure.</summary>
     public static string? RealPath(string path)
     {

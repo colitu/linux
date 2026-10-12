@@ -1,0 +1,12 @@
+{
+  "log": {
+    "level": "warn" /* hidden */
+  },
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}
+

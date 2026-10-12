@@ -67,6 +67,8 @@ find "$APP" -type d -exec chmod 0755 {} +
 find "$APP" -type f -exec chmod 0644 {} +
 chmod 0755 "$APP/ColituVPN"
 find "$APP/bin" -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} +
+# TUN mode: sudo runs this launcher (root:root 0755 in the package), never the core directly.
+install -m 0755 "$ROOT/scripts/colitu-core-root" "$APP/bin/colitu-core-root"
 # TUN mode refuses cores that group/others can write: never ship one.
 if [ -n "$(find "$APP" ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in $APP" >&2; exit 1; fi
 find "$APP" -maxdepth 1 -type f -name '*.so' -exec chmod 0755 {} +

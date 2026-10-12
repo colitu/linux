@@ -74,8 +74,9 @@ public partial class CoreConfigSingboxService
             }
         }
 
-        //Local srs files address
-        var localSrss = Utils.GetBinPath("srss");
+        //Local srs files address. As root (TUN) only the root-owned install folder's copies:
+        //the user's data folder is writable by anything running as the user.
+        var localSrss = context.RunsCoreAsRoot ? Path.Combine(RootCoreGuard.InstallBin(), "srss") : Utils.GetBinPath("srss");
 
         //Add ruleset srs
         _coreConfig.route.rule_set = [];

@@ -25,7 +25,8 @@ public partial class CoreConfigSingboxService
             {
                 _coreConfig.log.disabled = true;
             }
-            if (_config.CoreBasicItem.LogEnabled)
+            // A core running as root (TUN) logs to its output only: colitu-core-root refuses log files.
+            if (_config.CoreBasicItem.LogEnabled && !context.RunsCoreAsRoot)
             {
                 var dtNow = DateTime.Now;
                 _coreConfig.log.output = Utils.GetLogPath($"sbox_{dtNow:yyyy-MM-dd}.txt");
