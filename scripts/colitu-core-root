@@ -2,10 +2,14 @@
 # colitu-core-root: starts Colitu VPN's core (Xray or sing-box) as root for TUN mode.
 #
 # Installed root:root 0755 next to the cores (/opt/colitu-vpn/bin/colitu-core-root); the app runs
-#   sudo -S -- /opt/colitu-vpn/bin/colitu-core-root <core in this folder> <config.json>
+#   sudo -S -- /opt/colitu-vpn/bin/colitu-core-root <core in this folder> <config.json> <sha256>
 # after checking that this file and every folder above it belong to root (RootCoreGuard).
 #
 # The config comes from the user's data folder, which anything running as the user can change.
+# The app passes the SHA-256 of the config it generated and checked: the copy root runs must have
+# exactly that hash, so a config changed in between (or another file swapped in through a symlinked
+# folder) is refused before the core parses it. The path must be the real one (no symlink in any
+# component) and the file must belong to the user who ran sudo.
 # Root never reads it in place: it is copied (no symlinks, at most 4 MiB) into /run/colitu-vpn
 # (root:root 0700). The core itself parses the copy and prints it in canonical form
 # (`sing-box format`, `xray run -dump`): comments gone, escapes decoded, key case folded, one
@@ -15,7 +19,9 @@
 #     segment, is refused, except URL paths (transport/DoH/HTTP "path", Xray "serviceName"),
 #     sing-box process_path match rules, and sing-box local rule sets inside this folder,
 #   - relative paths (cache_file "cache.db") resolve in /run/colitu-vpn, the core's working folder,
-#   - no sing-box "tor" outbound (it starts an external program), Xray "ext:" files only by name.
+#   - no sing-box "tor" outbound (it starts an external program), Xray "ext:" files only by name,
+#   - every inbound except the TUN device listens on loopback; sing-box's clash_api only on
+#     loopback and with a secret; no sing-box v2ray_api.
 # The core then runs the root-owned copy that was checked, with a clean environment; Xray reads
 # geoip.dat/geosite.dat from this folder (XRAY_LOCATION_ASSET), never from the user's folder.
 #
@@ -44,6 +50,8 @@ refuse() {
 policy() {
   awk -v kind="$1" -v here="$2" '
 function fail(msg) { print "line " NR ": " msg; bad = 1; exit 1 }
+# A loopback listen address, with or without a port.
+function loopback(v) { return v ~ /^(127\.[0-9]+\.[0-9]+\.[0-9]+|localhost|::1|\[::1\])(:[0-9]+)?$/ && v !~ /^::1:/ }
 # A file or socket path: absolute, abstract socket, home, or a ".." segment.
 function pathlike(v) { return v ~ /^[\/@~]/ || v ~ /(^|\/)\.\.(\/|$)/ }
 function inhere(v) { return substr(v, 1, length(here) + 1) == here "/" && v !~ /(^|\/)\.\.?(\/|$)/ }
@@ -102,10 +110,19 @@ BEGIN {
     ckey[depth] = haskey ? key : "[]"
     ctype[depth] = ""
     isarr[depth] = (rest == "[")
+    # An inbound: an object right inside the top-level "inbounds" array.
+    inb[depth] = (!isarr[depth] && depth == 3 && ckey[2] == "inbounds" && isarr[2])
+    ilisten[depth] = ""; iproto[depth] = ""
+    isclash[depth] = (!isarr[depth] && kind == "sing-box" && ckey[depth] == "clash_api")
+    csecret[depth] = ""; cctl[depth] = ""
+    if (kind == "sing-box" && ckey[depth] == "v2ray_api") fail("v2ray_api")
     next
   }
   if (rest ~ /^[}\]],?$/) {
     if (haskey || depth == 0 || (substr(rest, 1, 1) == "]") != isarr[depth]) fail("unexpected line")
+    if (inb[depth] && iproto[depth] != "tun" && !loopback(ilisten[depth])) fail("inbound not on loopback")
+    if (isclash[depth] && (csecret[depth] == "" || !loopback(cctl[depth]))) fail("control API not on loopback with a secret")
+    inb[depth] = 0; isclash[depth] = 0
     depth--
     next
   }
@@ -115,6 +132,14 @@ BEGIN {
     value = substr(rest, 2, length(rest) - 2)
     effkey = haskey ? key : ckey[depth]
     if (haskey && key == "type") ctype[depth] = value
+    if (haskey && inb[depth]) {
+      if (key == "listen") ilisten[depth] = value
+      if (key == (kind == "xray" ? "protocol" : "type")) iproto[depth] = value
+    }
+    if (haskey && isclash[depth]) {
+      if (key == "secret") csecret[depth] = value
+      if (key == "external_controller") cctl[depth] = value
+    }
     check(effkey, value)
     next
   }
@@ -147,10 +172,15 @@ if [ "${1:-}" = "--policy" ]; then
   exit $?
 fi
 
-[ "$#" -eq 2 ] || refuse "usage: colitu-core-root <core> <config.json>"
+[ "$#" -eq 3 ] || refuse "usage: colitu-core-root <core> <config.json> <sha256>"
 core=$1
 config=$2
+want=$3
 [ "$(id -u)" = 0 ] || refuse "not running as root"
+case $want in
+  *[!0-9a-f]*|'') refuse "bad config hash" ;;
+esac
+[ "${#want}" -eq 64 ] || refuse "bad config hash"
 
 case $0 in
   /*) ;;
@@ -179,6 +209,14 @@ case $name in
   *) refuse "bad config file name" ;;
 esac
 [ -f "$config" ] && [ ! -L "$config" ] || refuse "the config is not a regular file"
+# The real path, as the app passed it: no symlink in any component (a folder swapped for a link to
+# somewhere else is caught here, and by the hash below if it happens after this check).
+[ "$(realpath -e -- "$config" 2>/dev/null)" = "$config" ] || refuse "the config path is not its real path"
+# The config belongs to the user who ran sudo, never to root or someone else.
+case ${SUDO_UID:-} in
+  ''|*[!0-9]*) refuse "not started through sudo" ;;
+esac
+[ "$(stat -c '%u' -- "$config" 2>/dev/null)" = "$SUDO_UID" ] || refuse "the config does not belong to the user who started it"
 
 # Root-only working folder (/run is root's: nobody else can plant anything there).
 if [ -L "$WORK" ] || { [ -e "$WORK" ] && [ ! -d "$WORK" ]; }; then
@@ -196,6 +234,9 @@ rm -f -- "$copy" "$canon" "$errs"
 dd if="$config" of="$copy" bs=4096 count=1025 iflag=nofollow 2>/dev/null || refuse "the config could not be read"
 size=$(wc -c < "$copy" | tr -d ' ')
 [ "${size:-0}" -gt 0 ] && [ "$size" -le "$MAX_BYTES" ] || refuse "the config is empty or larger than $MAX_BYTES bytes"
+# Exactly the config the app generated and checked; anything else is not parsed at all.
+got=$(sha256sum -- "$copy" | cut -d ' ' -f 1)
+[ "$got" = "$want" ] || { rm -f -- "$copy"; refuse "the config changed after the app checked it"; }
 
 case $kind in
   sing-box) env -i PATH="$PATH" "$core" format -c "$copy" > "$canon" 2> "$errs" ;;

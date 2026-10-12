@@ -12,6 +12,9 @@
 		<Company>COLITU LIMITED</Company>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<CETCompat>false</CETCompat>
+		<!-- The TUN ping rule lets this exe's probe traffic out directly: DOTNET_STARTUP_HOOKS (any process
+		     of the user can set it) must not load someone else's assembly into it. -->
+		<StartupHookSupport>false</StartupHookSupport>
 	</PropertyGroup>
 
 	<ItemGroup>

@@ -33,6 +33,8 @@ public sealed class ColituVpnService
     private volatile bool _credentialsRefused;
 
     private List<ColituVpnServer> _lastServers = [];
+    // The TUN ping rule's exe path: set only for a root-owned install (RootCoreGuard.TrustedAppPath).
+    private static readonly Lazy<string?> TrustedAppPath = new(RootCoreGuard.TrustedAppPath);
     private Timer? _watchdog;
     private readonly ColituKillSwitch _killSwitch = new();
     /// <summary>When the last traffic check of this session ran (Environment.TickCount64).</summary>
@@ -247,6 +249,7 @@ public sealed class ColituVpnService
         var network = CurrentNetworkKey();
         var measured = await ColituLatency.MeasureAllAsync(servers);
         var at = DateTimeOffset.UtcNow;
+        await RefreshPingRouteTargetsAsync(servers, TimeSpan.FromSeconds(1));
         // Only the servers that were measured (at most ColituLatency.MaxServers): the rest keep their old ping.
         foreach (var server in servers.Where(ColituLatency.CanProbe).DistinctBy(item => item.Id, StringComparer.OrdinalIgnoreCase).Take(ColituLatency.MaxServers))
         {
@@ -554,6 +557,11 @@ public sealed class ColituVpnService
             if (automatic && !KillSwitchEngaged)
             {
                 await EnsureFreshPingsAsync(token);
+            }
+            if (Preferences.IsTunMode)
+            {
+                // Addresses for the TUN ping rule; the resolver's cache usually has them from the last pings.
+                await RefreshPingRouteTargetsAsync(_lastServers, TimeSpan.FromSeconds(3), token);
             }
             var ranked = automatic ? RankedServers() : [];
             if (automatic)
@@ -995,7 +1003,34 @@ public sealed class ColituVpnService
     /// <summary>Where a check of the whole tunnel goes: the check inbound, else the local proxy port (routing rules apply there).</summary>
     private (int Port, NetworkCredential? Credentials) TunnelCheckTarget() => _checkInbound is { } check
         ? (check.Port, new NetworkCredential(check.User, check.Password))
-        : (AppManager.Instance.GetLocalPort(EInboundProtocol.socks), null);
+        : (AppManager.Instance.GetLocalPort(EInboundProtocol.socks), LocalInboundCredentials());
+
+    /// <summary>The local port's per-run account while it asks for one (TUN mode), else null.</summary>
+    private NetworkCredential? LocalInboundCredentials() => AppManager.Instance.LocalInboundAuthFor(_config.TunModeItem.EnableTun)
+        ? new NetworkCredential(AppManager.Instance.LocalInboundUser, AppManager.Instance.LocalInboundPass)
+        : null;
+
+    /// <summary>
+    /// Probe addresses for the TUN ping rule (AppManager.PingRouteTargets), from
+    /// <paramref name="servers"/> (the resolver's cache usually answers). An empty answer (no server
+    /// list yet, as at an automatic connect right after start) keeps the previous addresses; the
+    /// next core start uses the new ones.
+    /// </summary>
+    private static async Task RefreshPingRouteTargetsAsync(IEnumerable<ColituVpnServer> servers, TimeSpan budget, CancellationToken token = default)
+    {
+        try
+        {
+            var targets = await ColituLatency.ResolveTargetsAsync(servers, budget, token);
+            if (targets.Count > 0)
+            {
+                AppManager.Instance.PingRouteTargets = targets;
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            // Over budget: the previous addresses stay.
+        }
+    }
 
     /// <summary>
     /// Adds the planned spare to the main
@@ -2594,7 +2629,7 @@ public sealed class ColituVpnService
                 }
             }
             allowed.AddRange(new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4" }.Select(IPAddress.Parse));
-            await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences));
+            await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
             LogConnection($"Kill switch engaged ({reason}), {allowed.Distinct().Count()} addresses allowed");
             return true;
         }
@@ -3349,6 +3384,19 @@ public sealed class ColituVpnService
 
         // Send through the physical interface, never through another VPN's tunnel.
         _config.CoreBasicItem.BindInterface = ColituNetwork.PhysicalInterfaceName();
+        // TUN mode: the ping rule names this exe only from a root-owned install, and the local
+        // SOCKS/HTTP port asks for a per-run account (other programs and users on this computer
+        // cannot use the tunnel through it). Proxy mode keeps the port open on 127.0.0.1: desktop
+        // proxy settings carry no credentials.
+        var tun = _config.TunModeItem.EnableTun;
+        AppManager.Instance.PingRouteAppPath = tun ? TrustedAppPath.Value : null;
+        AppManager.Instance.LocalInboundAuth = tun;
+        if (tun)
+        {
+            LogConnection(AppManager.Instance.PingRouteAppPath == null
+                ? "Ping route not added: the app is not in a root-owned install folder; pings rely on the interface binding"
+                : $"Ping route: {AppManager.Instance.PingRouteTargets.Count} probe address(es)");
+        }
         LogConnection($"Building core config for profile={profileItem.IndexId}, type={profileItem.ConfigType}, outbound interface={_config.CoreBasicItem.BindInterface ?? "auto"}");
         var allResult = await CoreConfigContextBuilder.BuildAll(_config, profileItem);
         if (!allResult.Success)
@@ -4188,7 +4236,10 @@ public sealed record ColituVpnPreferences(
     // start in Simple mode (ForNewInstall).
     bool AdvancedMode = true,
     // Order of the locations list (ColituLocationSort): ping, name or load.
-    string LocationSort = ColituLocationSort.Name)
+    string LocationSort = ColituLocationSort.Name,
+    // The kill switch lets the local network (printers, NAS, the router page) through; off: only
+    // link-local, multicast and DHCP. On by default, as before this setting existed.
+    bool KillSwitchAllowLan = true)
 {
     /// <summary>
     /// Preferences of a first run (no saved state yet): privacy mode on, Simple mode. The record

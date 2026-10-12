@@ -12,7 +12,9 @@ namespace ServiceLib.Common;
 /// samples (TestData/rootconfig).
 /// Rules: no log file; no file or socket path (a value starting with "/", "@" or "~", or with a
 /// ".." segment) except URL paths and sing-box process_path rules; sing-box local rule sets only
-/// from the install folder; no sing-box tor outbound; Xray "ext:" files only by name.
+/// from the install folder; no sing-box tor outbound; Xray "ext:" files only by name; every inbound
+/// except the TUN device, and sing-box's control API (with a secret), listen on loopback only; no
+/// sing-box v2ray_api.
 /// </summary>
 public static class RootConfigPolicy
 {
@@ -72,12 +74,31 @@ public static class RootConfigPolicy
         {
             if (container.ValueKind == JsonValueKind.Object)
             {
+                if (kind == "sing-box" && key == "v2ray_api")
+                {
+                    return "v2ray_api";
+                }
                 foreach (var member in container.EnumerateObject())
                 {
                     if (Visit(member.Name, member.Value, frames, kind, here) is { } reason)
                     {
                         return reason;
                     }
+                }
+                // A root core listens on loopback only: an inbound (other than the TUN device) and
+                // sing-box's control API. The control API also needs its secret.
+                if (frames.Count == 3 && frames[1].Key == "inbounds" && frames[2].Key == "[]")
+                {
+                    var protocol = StringMember(container, kind == "xray" ? "protocol" : "type");
+                    if (protocol != "tun" && !IsLoopbackListen(StringMember(container, "listen")))
+                    {
+                        return "inbound not on loopback";
+                    }
+                }
+                if (kind == "sing-box" && key == "clash_api"
+                    && (!IsLoopbackListen(StringMember(container, "external_controller")) || string.IsNullOrEmpty(StringMember(container, "secret"))))
+                {
+                    return "control API not on loopback with a secret";
                 }
             }
             else
@@ -155,6 +176,15 @@ public static class RootConfigPolicy
         }
         return IsPathLike(value) ? $"file path in \"{key}\"" : null;
     }
+
+    private static string? StringMember(JsonElement container, string name) =>
+        container.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static readonly Regex LoopbackListen = new(@"^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|localhost|::1|\[::1\])(:[0-9]{1,5})?$", RegexOptions.CultureInvariant);
+
+    /// <summary>A loopback listen address, with or without a port ("127.0.0.1", "[::1]:9090"); "::1" only without one.</summary>
+    public static bool IsLoopbackListen(string? value) =>
+        value != null && LoopbackListen.IsMatch(value) && !(value.StartsWith("::1:", StringComparison.Ordinal));
 
     /// <summary>A file or socket path: absolute, abstract socket, home, or with a ".." segment.</summary>
     internal static bool IsPathLike(string value) =>

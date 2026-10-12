@@ -2136,6 +2136,22 @@
                                                     <TextBlock
                                                         FontSize="14.5"
                                                         FontWeight="Medium"
+                                                        Text="{s:T settings.killSwitchLan}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.killSwitchLanHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsKillSwitchLan"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
                                                         Text="{s:T settings.dns}" />
                                                     <TextBlock
                                                         Margin="0,3,0,0"

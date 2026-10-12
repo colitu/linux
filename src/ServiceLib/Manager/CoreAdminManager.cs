@@ -52,26 +52,36 @@ public class CoreAdminManager
             Logging.SaveLog($"{_tag}: core not run as root ({launcherReason}{(kind == null ? $"; {Path.GetFileName(rootCore)} is not run as root" : "")})");
             throw new UnauthorizedAccessException(RootCoreRefusedMessage);
         }
-        var configFile = Utils.GetBinConfigPath(configPath);
+        // The launcher wants the real path (no symlink in any component).
+        var configFile = RootCoreGuard.RealPath(Utils.GetBinConfigPath(configPath));
+        if (configFile == null)
+        {
+            Logging.SaveLog($"{_tag}: config not run as root (config file not found)");
+            throw new UnauthorizedAccessException($"{RootConfigPolicy.RefusedMarker}: config file not found");
+        }
+        // The bytes checked here are the ones root runs: their SHA-256 goes to the launcher, which
+        // refuses a copy with any other hash (a config changed between this check and the copy).
+        var configBytes = File.ReadAllBytes(configFile);
+        var configHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(configBytes)).ToLowerInvariant();
         // The same check the launcher makes, here first for a readable error.
-        if (!RootConfigPolicy.Check(File.ReadAllText(configFile), kind, Path.GetDirectoryName(launcher) ?? "", out var configReason))
+        if (!RootConfigPolicy.Check(System.Text.Encoding.UTF8.GetString(configBytes).TrimStart('﻿'), kind, Path.GetDirectoryName(launcher) ?? "", out var configReason))
         {
             Logging.SaveLog($"{_tag}: config not run as root ({configReason})");
             throw new UnauthorizedAccessException($"{RootConfigPolicy.RefusedMarker}: {configReason}");
         }
 
-        // sudo is started directly with the command as arguments (no shell script in the user's
-        // data folder that something running as the user could swap to read the password).
-        var args = $"-S -- {launcher.AppendQuotes()} {rootCore.AppendQuotes()} {configFile.AppendQuotes()}";
-
+        // sudo is started directly with the command as arguments, one argv entry each (no shell
+        // script in the user's data folder that something running as the user could swap to read
+        // the password, no quoting).
         var procService = new ProcessService(
             fileName: SudoPath(),
-            arguments: args,
+            arguments: string.Empty,
             workingDirectory: Utils.GetBinConfigPath(),
             displayLog: true,
             redirectInput: true,
             environmentVars: null,
-            updateFunc: _updateFunc
+            updateFunc: _updateFunc,
+            argumentList: ["-S", "--", launcher, rootCore, configFile, configHash]
         );
 
         await procService.StartAsync(AppManager.Instance.LinuxSudoPwd);

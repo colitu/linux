@@ -19,7 +19,8 @@ public class ProcessService : IDisposable
         bool displayLog,
         bool redirectInput,
         Dictionary<string, string>? environmentVars,
-        Func<bool, string, Task>? updateFunc)
+        Func<bool, string, Task>? updateFunc,
+        IEnumerable<string>? argumentList = null)
     {
         _updateFunc = updateFunc;
 
@@ -40,6 +41,15 @@ public class ProcessService : IDisposable
             },
             EnableRaisingEvents = true
         };
+        // One argv entry each, no quoting (instead of the Arguments string).
+        if (argumentList != null)
+        {
+            _process.StartInfo.Arguments = string.Empty;
+            foreach (var argument in argumentList)
+            {
+                _process.StartInfo.ArgumentList.Add(argument);
+            }
+        }
 
         if (environmentVars != null)
         {

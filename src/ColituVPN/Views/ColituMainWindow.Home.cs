@@ -45,7 +45,7 @@ public partial class ColituMainWindow
         {
             mode.IsCheckedChanged += async (sender, _) => await ModeCheckedAsync(sender);
         }
-        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsPrivacy, SettingsWarmSpare, SettingsTray })
+        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, SettingsKillSwitchLan, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsPrivacy, SettingsWarmSpare, SettingsTray })
         {
             box.IsCheckedChanged += async (sender, _) => await PreferenceChangedAsync(sender);
         }
@@ -403,6 +403,7 @@ public partial class ColituMainWindow
             HomeModeTun.IsChecked = SettingsModeTun.IsChecked = tun;
             HomeModeProxy.IsChecked = SettingsModeProxy.IsChecked = !tun;
             HomeKillSwitch.IsChecked = SettingsKillSwitch.IsChecked = preferences.KillSwitchEnabled;
+            SettingsKillSwitchLan.IsChecked = preferences.KillSwitchAllowLan;
             HomeAutoConnect.IsChecked = SettingsAutoConnect.IsChecked = preferences.AutoConnectEnabled;
             SettingsDns.IsChecked = preferences.DnsLeakProtectionEnabled;
             SettingsAdBlock.IsChecked = preferences.AdBlockEnabled;
@@ -467,6 +468,7 @@ public partial class ColituMainWindow
         var on = box.IsChecked == true;
         var preferences = _vpn.Preferences;
         preferences = box == HomeKillSwitch || box == SettingsKillSwitch ? preferences with { KillSwitchEnabled = on }
+            : box == SettingsKillSwitchLan ? preferences with { KillSwitchAllowLan = on }
             : box == HomeAutoConnect || box == SettingsAutoConnect ? preferences with { AutoConnectEnabled = on }
             : box == SettingsDns ? preferences with { DnsLeakProtectionEnabled = on }
             : box == SettingsAdBlock ? preferences with { AdBlockEnabled = on }

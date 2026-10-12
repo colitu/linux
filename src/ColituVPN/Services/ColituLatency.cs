@@ -56,6 +56,57 @@ public static class ColituLatency
             .ToDictionary(result => result.Item1, result => result.Item2!.Value, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The public IPv4 addresses the probes of <paramref name="servers"/> dial (same resolver and
+    /// filters as <see cref="MeasureAsync"/>), for the TUN ping rule (AppManager.PingRouteTargets).
+    /// Whatever does not resolve within <paramref name="budget"/> is left out: those probes rely on
+    /// the adapter binding alone.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> ResolveTargetsAsync(IEnumerable<ColituVpnServer> servers, TimeSpan budget, CancellationToken token = default)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(budget);
+        using var gate = new SemaphoreSlim(Parallel);
+        var hosts = servers
+            .Where(CanProbe)
+            .Select(server => server.Host!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxServers)
+            .ToList();
+        var lookups = hosts.Select(async host =>
+        {
+            try
+            {
+                await gate.WaitAsync(deadline.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            try
+            {
+                return await ColituNetwork.ResolveServerAsync(host, deadline.Token);
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+        var addresses = await Task.WhenAll(lookups);
+        return addresses
+            .OfType<IPAddress>()
+            .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+            .Where(address => address.AddressFamily == AddressFamily.InterNetwork && IsPublic(address))
+            .Select(address => address.ToString())
+            .Distinct()
+            .Take(256)
+            .ToList();
+    }
+
     /// <summary>The server has a probe address: a missing result from <see cref="MeasureAllAsync"/> means the ping failed.</summary>
     public static bool CanProbe(ColituVpnServer server) =>
         server.Id.IsNotEmpty() && server.Port is { } port && ProbeAllowed(server.Host, port);

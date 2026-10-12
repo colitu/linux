@@ -117,6 +117,22 @@ public static class RootCoreGuard
     public static string? ResolveLauncher(out string reason) =>
         ResolveLauncher(Utils.GetBaseDirectory("bin"), RealPath, StatPath, out reason);
 
+    /// <summary>
+    /// This app's exe with every symlink resolved (as sing-box sees it in /proc/&lt;pid&gt;/exe) when
+    /// it and every folder above it belong to root and nobody else can write them; otherwise null.
+    /// The TUN ping rule names the exe only then: a path the user can write could hold anything.
+    /// </summary>
+    public static string? TrustedAppPath() => TrustedAppPath(Utils.GetExePath(), RealPath, StatPath);
+
+    public static string? TrustedAppPath(string? exePath, Func<string, string?> realPath, StatFunc stat)
+    {
+        if (string.IsNullOrEmpty(exePath) || realPath(exePath) is not { } real)
+        {
+            return null;
+        }
+        return IsRootOwnedChain(real, stat, out _) ? real : null;
+    }
+
     public static string? ResolveLauncher(string installBin, Func<string, string?> realPath, StatFunc stat, out string reason)
     {
         var candidate = installBin.TrimEnd('/') + "/" + LauncherName;

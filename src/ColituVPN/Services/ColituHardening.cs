@@ -256,6 +256,19 @@ public static class ColituHardening
         }
     }
 
+    /// <summary>This process's user id (Linux); null where there is none to ask.</summary>
+    public static uint? CurrentUid()
+    {
+        try
+        {
+            return OperatingSystem.IsWindows() ? null : getuid();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     [DllImport("libc", SetLastError = false)]
     private static extern uint getuid();
 }

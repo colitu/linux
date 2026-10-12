@@ -13,6 +13,36 @@ public sealed class AppManager
 
     /// <summary>Per-run secret for the core's local control API, so other programs on the PC cannot use it.</summary>
     public string ClashApiSecret { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+    /// <summary>
+    /// The app's exe (symlinks resolved) for the TUN ping rule, set by the client only when the exe
+    /// and every folder above it belong to root (RootCoreGuard.TrustedAppPath); null: no rule.
+    /// </summary>
+    public string? PingRouteAppPath { get; set; }
+
+    /// <summary>Resolved public IPv4 addresses of the servers' ping targets for the TUN ping rule; empty: no rule.</summary>
+    public IReadOnlyList<string> PingRouteTargets { get; set; } = [];
+
+    /// <summary>Per-run account for the local SOCKS/HTTP inbound while <see cref="LocalInboundAuth"/> is on.</summary>
+    public string LocalInboundUser { get; } = "colitu-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4)).ToLowerInvariant();
+
+    /// <inheritdoc cref="LocalInboundUser"/>
+    public string LocalInboundPass { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+    /// <summary>
+    /// TUN configs give the local SOCKS/HTTP inbound (127.0.0.1) the per-run account above, so other
+    /// programs and users on this computer cannot use the tunnel through it. Set by the client
+    /// before a config is generated; off in system-proxy mode (desktop proxy settings carry no
+    /// credentials).
+    /// </summary>
+    public bool LocalInboundAuth { get; set; }
+
+    /// <summary>
+    /// The local inbound needs the per-run account: TUN mode is on (<paramref name="tunMode"/>, the
+    /// app setting, not a context flag: the Xray core behind a sing-box TUN front runs with TUN off
+    /// in its own context, and the front must still log in to it).
+    /// </summary>
+    public bool LocalInboundAuthFor(bool tunMode) => tunMode && LocalInboundAuth;
     public IWindowDialog WindowDialog { get; set; } = null!;
 
     public int StatePort

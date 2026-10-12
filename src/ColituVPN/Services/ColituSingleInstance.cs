@@ -26,7 +26,29 @@ public sealed class ColituSingleInstance : IDisposable
         var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
         if (string.IsNullOrWhiteSpace(runtime) || !Directory.Exists(runtime))
         {
-            runtime = Path.GetTempPath();
+            // Not /tmp: another user could take the name there first and keep the app from starting.
+            // The user's own cache folder (0700) belongs to this user alone.
+            var cache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+            if (string.IsNullOrWhiteSpace(cache) || !Path.IsPathRooted(cache))
+            {
+                cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache");
+            }
+            runtime = Path.Combine(cache, "colitu-vpn");
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    Directory.CreateDirectory(runtime);
+                }
+                else
+                {
+                    Directory.CreateDirectory(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                }
+            }
+            catch
+            {
+                runtime = Path.GetTempPath();
+            }
         }
         return Path.Combine(runtime, $"colitu-vpn-{Environment.UserName}.sock");
     }

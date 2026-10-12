@@ -44,9 +44,24 @@ public sealed class ColituUpdateService
     internal const long MaxPackageBytes = 512L << 20;
     private static readonly TimeSpan AttemptCooldown = TimeSpan.FromMinutes(30);
 
-    private readonly HttpClient _httpClient = new(ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false })) { Timeout = TimeSpan.FromSeconds(30) };
+    // The manifest is read into memory (a few hundred bytes): a broken or hostile answer cannot grow without bound.
+    private readonly HttpClient _httpClient = new(CreateHandler()) { Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = MaxManifestBytes };
     // HttpClient.Timeout also cancels content streaming, so packages get their own client with a generous limit.
-    private readonly HttpClient _downloadClient = new(ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false })) { Timeout = TimeSpan.FromMinutes(30) };
+    private readonly HttpClient _downloadClient = new(CreateHandler()) { Timeout = TimeSpan.FromMinutes(30) };
+
+    /// <summary>The release manifest is a few hundred bytes.</summary>
+    internal const int MaxManifestBytes = 256 * 1024;
+
+    /// <summary>Most redirects followed for one manifest or package request.</summary>
+    internal const int MaxRedirects = 3;
+
+    /// <summary>
+    /// Handler for the manifest and the package. Redirects are not followed automatically
+    /// (<see cref="SendCheckedAsync"/> follows them by hand and checks every hop); the certificate
+    /// pin sits on the handler, so it applies to the host of a followed redirect too.
+    /// </summary>
+    internal static SocketsHttpHandler CreateHandler() =>
+        ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public event Action<ColituUpdateInfo>? UpdateAvailable;
@@ -106,11 +121,12 @@ public sealed class ColituUpdateService
         try
         {
             ClearCompletedAttempt();
-            using var request = new HttpRequestMessage(HttpMethod.Get, ManifestUrl);
-            request.Headers.TryAddWithoutValidation("X-Client-Platform", ColituAuthService.ClientPlatform);
-            request.Headers.TryAddWithoutValidation("X-App-Version", LocalVersionName);
-            request.Headers.TryAddWithoutValidation("User-Agent", $"ColituVPN/{LocalVersionName} Linux");
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await SendCheckedAsync(_httpClient, new Uri(ManifestUrl), request =>
+            {
+                request.Headers.TryAddWithoutValidation("X-Client-Platform", ColituAuthService.ClientPlatform);
+                request.Headers.TryAddWithoutValidation("X-App-Version", LocalVersionName);
+                request.Headers.TryAddWithoutValidation("User-Agent", $"ColituVPN/{LocalVersionName} Linux");
+            }, HttpCompletionOption.ResponseContentRead, CancellationToken.None);
             if (!response.IsSuccessStatusCode) return null;
             var payload = await response.Content.ReadFromJsonAsync<ColituLinuxVersionPayload>(_jsonOptions);
             if (payload == null) return null;
@@ -196,7 +212,7 @@ public sealed class ColituUpdateService
         var updateDir = ColituHardening.CreateProtectedDirectory(Path.Combine(Utils.StartupPath(), UpdateFolderName));
         var destPath = Path.Combine(updateDir, $"colitu-vpn-{info.VersionCode}.{info.PackageKind}");
 
-        using var response = await _downloadClient.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendCheckedAsync(_downloadClient, new Uri(info.DownloadUrl), null, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var total = response.Content.Headers.ContentLength ?? -1;
@@ -350,10 +366,105 @@ public sealed class ColituUpdateService
         {
             throw new InvalidOperationException("Update download URL must use HTTPS.");
         }
-        if (!TrustedDownloadHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
+        if (!TrustedDownloadHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(uri.UserInfo) || uri.Port != 443)
         {
             throw new InvalidOperationException("Update download host is not trusted.");
         }
+    }
+
+    /// <summary>
+    /// GET <paramref name="start"/> and follow up to <see cref="MaxRedirects"/> redirects by hand.
+    /// Every hop must pass <see cref="IsAllowedRedirectTarget"/>; otherwise the request is abandoned
+    /// with an <see cref="InvalidOperationException"/> (not retried by the download loop) and the
+    /// rejected host is logged masked. The client's handler must have AllowAutoRedirect off.
+    /// </summary>
+    internal static async Task<HttpResponseMessage> SendCheckedAsync(
+        HttpClient client,
+        Uri start,
+        Action<HttpRequestMessage>? prepare,
+        HttpCompletionOption completion,
+        CancellationToken cancellationToken,
+        IReadOnlySet<string>? mirrorHosts = null)
+    {
+        var uri = start;
+        for (var redirects = 0; ; redirects++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            prepare?.Invoke(request);
+            var response = await client.SendAsync(request, completion, cancellationToken);
+            if (!IsRedirect(response.StatusCode))
+            {
+                return response;
+            }
+            var location = response.Headers.Location;
+            response.Dispose();
+            if (location == null)
+            {
+                throw new InvalidOperationException("Update server sent a redirect without a target.");
+            }
+            var next = location.IsAbsoluteUri ? location : new Uri(uri, location);
+            if (redirects + 1 > MaxRedirects)
+            {
+                LogRedirect($"ColituUpdateService: more than {MaxRedirects} redirects; download abandoned");
+                throw new InvalidOperationException("Update server redirected too many times.");
+            }
+            if (!IsAllowedRedirectTarget(next, mirrorHosts))
+            {
+                LogRedirect($"ColituUpdateService: redirect to an untrusted address refused ({MaskForLog(next)}); download abandoned");
+                throw new InvalidOperationException("Update server redirected to an untrusted address.");
+            }
+            uri = next;
+        }
+    }
+
+    private static void LogRedirect(string message)
+    {
+        try
+        {
+            Logging.SaveLog(message);
+        }
+        catch
+        {
+            // Logging must not replace the refusal.
+        }
+    }
+
+    private static bool IsRedirect(System.Net.HttpStatusCode status) => status is
+        System.Net.HttpStatusCode.MultipleChoices or System.Net.HttpStatusCode.MovedPermanently or System.Net.HttpStatusCode.Found or
+        System.Net.HttpStatusCode.SeeOther or System.Net.HttpStatusCode.TemporaryRedirect or System.Net.HttpStatusCode.PermanentRedirect;
+
+    /// <summary>
+    /// A redirect may lead only to https on port 443, without user info, to colitu.com, a subdomain
+    /// of it, or a mirror host embedded by the build (<see cref="ColituNotices.SafeUrl"/>).
+    /// </summary>
+    /// <param name="mirrorHosts">Mirror hosts; null takes the ones embedded by the build.</param>
+    internal static bool IsAllowedRedirectTarget(Uri uri, IReadOnlySet<string>? mirrorHosts = null)
+    {
+        if (!uri.IsAbsoluteUri)
+        {
+            return false;
+        }
+#if DEBUG
+        if (uri.IsLoopback)
+        {
+            return true;
+        }
+#endif
+        return uri.Scheme == Uri.UriSchemeHttps
+            && uri.Port == 443
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && ColituNotices.SafeUrl(uri.AbsoluteUri, mirrorHosts) != null;
+    }
+
+    /// <summary>Scheme, port and only the last label of the host: no node or mirror name in logs.</summary>
+    internal static string MaskForLog(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri) return "?";
+        var host = uri.IdnHost.TrimEnd('.');
+        var dot = host.LastIndexOf('.');
+        var masked = dot > 0 && dot < host.Length - 1 && !char.IsDigit(host[^1]) ? "***" + host[dot..] : "***";
+        return $"{uri.Scheme}://{(string.IsNullOrEmpty(uri.UserInfo) ? "" : "***@")}{masked}:{uri.Port}";
     }
 
     // Fixed list: the API address can be configured, so it must not widen where packages come from.

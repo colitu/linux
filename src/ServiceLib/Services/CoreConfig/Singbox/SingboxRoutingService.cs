@@ -318,32 +318,40 @@ public partial class CoreConfigSingboxService
     }
 
     /// <summary>
-    /// TCP from the Colitu app to the ping ports goes out direct; null without a direct outbound or
-    /// when the app runs under the shared dotnet host (its path would match every .NET program).
+    /// TCP from the Colitu app to its ping targets on the ping ports goes out direct. The fields are
+    /// AND'ed: the app's exe by its resolved path (<see cref="AppManager.PingRouteAppPath"/>, set by
+    /// the client only for a root-owned install), the resolved probe addresses
+    /// (<see cref="AppManager.PingRouteTargets"/>, one /32 each), TCP and the ping ports. Any other
+    /// destination, and any other program, stays in the tunnel. Null without a direct outbound, a
+    /// trusted path or a target, or when the app runs under the shared dotnet host (its path would
+    /// match every .NET program); the pings then rely on the client's adapter pin alone.
     /// </summary>
-    internal Rule4Sbox? BuildColituPingDirectRule(string? appPath = null)
+    internal Rule4Sbox? BuildColituPingDirectRule()
     {
         if (!_coreConfig.outbounds.Any(o => o.tag == Global.DirectTag))
         {
             return null;
         }
-        appPath ??= Utils.GetExePath();
-        if (appPath.IsNullOrEmpty())
+        var appPath = AppManager.Instance.PingRouteAppPath;
+        if (appPath.IsNullOrEmpty() || !appPath.StartsWith('/')
+            || Path.GetFileNameWithoutExtension(appPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
-        // sing-box compares with the resolved executable (/proc/<pid>/exe).
-        if (!Utils.IsWindows())
-        {
-            appPath = RootCoreGuard.RealPath(appPath) ?? appPath;
-        }
-        if (Path.GetFileNameWithoutExtension(appPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        var targets = AppManager.Instance.PingRouteTargets
+            .Select(item => IPAddress.TryParse(item, out var address) && address.AddressFamily == AddressFamily.InterNetwork ? $"{address}/32" : null)
+            .OfType<string>()
+            .Distinct()
+            .Take(256)
+            .ToList();
+        if (targets.Count == 0)
         {
             return null;
         }
         return new Rule4Sbox
         {
             process_path = [appPath],
+            ip_cidr = targets,
             network = ["tcp"],
             port = [.. Global.ColituPingPorts],
             outbound = Global.DirectTag,

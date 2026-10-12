@@ -5,6 +5,13 @@ set -euo pipefail
 # (release-linux.yml): that one adds the Russian rule sets, pins and checks the cores and
 # installs on older distributions. Packages from this script are not published.
 echo "WARNING: legacy script; release packages come from scripts/package-linux.sh" >&2
+# It downloads the cores, geo files and rule sets from moving "latest"/branch URLs without a pinned
+# checksum, and the cores run as root in TUN mode. It only runs when that is asked for explicitly.
+if [[ "${COLITU_ALLOW_UNPINNED:-}" != "1" ]]; then
+  echo "Refusing to build: this script downloads unpinned, unchecked cores (they run as root)." >&2
+  echo "Use scripts/package-linux.sh (pinned SHA-256), or set COLITU_ALLOW_UNPINNED=1 for a local test build." >&2
+  exit 2
+fi
 
 VERSION_ARG=""
 WITH_CORE="both"

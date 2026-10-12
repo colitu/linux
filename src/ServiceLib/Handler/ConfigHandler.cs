@@ -1568,6 +1568,12 @@ public static class ConfigHandler
                 Address = Global.Loopback,
                 Port = AppManager.Instance.GetLocalPort(EInboundProtocol.socks)
             };
+            // The Xray core behind this TUN front asks for the per-run account (AppManager.LocalInboundAuth).
+            if (AppManager.Instance.LocalInboundAuthFor(config.TunModeItem.EnableTun))
+            {
+                itemSocks.Username = AppManager.Instance.LocalInboundUser;
+                itemSocks.Password = AppManager.Instance.LocalInboundPass;
+            }
         }
         else if (node.ConfigType == EConfigType.Custom
             && node.PreSocksPort is > 0 and <= 65535)

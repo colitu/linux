@@ -163,7 +163,9 @@ public class ColituSplitTunnelTests
     {
         var prefs = Prefs("exclude", tun: true, ips: ["203.0.113.0/24", "2001:db8::/32"]);
         var script = ColituKillSwitch.BuildEngageScript([IPAddress.Parse("198.51.100.1")], 1, ColituSplitTunnel.KillSwitchBypassNetworks(prefs));
-        script.Should().Contain("ip daddr { 198.51.100.1, 203.0.113.0/24 } accept");
+        // The control plane and the excluded networks are separate rules (only the first is limited to the app's user).
+        script.Should().Contain("ip daddr { 198.51.100.1 } accept");
+        script.Should().Contain("ip daddr { 203.0.113.0/24 } accept");
         script.Should().Contain("ip6 daddr { 2001:db8::/32 } accept");
         script.Should().Contain($"meta mark 0x{Global.LinuxTunDirectRoutingMark:x} accept");
         ColituSplitTunnel.KillSwitchBypassNetworks(Prefs("include", tun: true, ips: ["203.0.113.0/24"])).Should().BeEmpty();

@@ -160,6 +160,11 @@ public partial class CoreConfigV2rayService
         inbound.sniffing.enabled = inItem.SniffingEnabled;
         inbound.sniffing.destOverride = inItem.DestOverride;
         inbound.sniffing.routeOnly = inItem.RouteOnly;
+        if (bSocks && AppManager.Instance.LocalInboundAuthFor(_config.TunModeItem.EnableTun))
+        {
+            inbound.settings.auth = "password";
+            inbound.settings.accounts = [new() { user = AppManager.Instance.LocalInboundUser, pass = AppManager.Instance.LocalInboundPass }];
+        }
 
         if (_config.SimpleDNSItem.FakeIP == true)
         {

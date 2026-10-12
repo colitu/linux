@@ -49,14 +49,14 @@ public sealed class ColituKillSwitch
     /// addresses the user sends around the VPN; they stay reachable while it is down too.
     /// Throws when sudo refuses or nft fails.
     /// </summary>
-    public async Task EngageAsync(IEnumerable<IPAddress> allowed, IEnumerable<string>? bypassNetworks = null)
+    public async Task EngageAsync(IEnumerable<IPAddress> allowed, IEnumerable<string>? bypassNetworks = null, bool allowLan = true)
     {
         var password = AppManager.Instance.LinuxSudoPwd;
         if (password.IsNullOrEmpty())
         {
             throw new InvalidOperationException("The kill switch needs the administrator password (TUN mode).");
         }
-        var script = BuildEngageScript(allowed, Environment.ProcessId, bypassNetworks);
+        var script = BuildEngageScript(allowed, Environment.ProcessId, bypassNetworks, allowLan, ColituHardening.CurrentUid());
         var (code, error) = await RunAsRootAsync(script, password);
         if (code != 0)
         {
@@ -113,20 +113,32 @@ public sealed class ColituKillSwitch
         }
     }
 
-    internal static string BuildEngageScript(IEnumerable<IPAddress> allowed, int appPid, IEnumerable<string>? bypassNetworks = null)
+    /// <summary>Link-local, multicast and broadcast: DHCP and neighbour discovery need them even without the local network.</summary>
+    internal static readonly string[] LinkLocal4 = ["169.254.0.0/16", "224.0.0.0/4", "255.255.255.255"];
+    internal static readonly string[] LinkLocal6 = ["fe80::/10", "ff00::/8"];
+
+    /// <param name="allowed">The control plane: VPN servers, the panel API, the DoH resolvers.</param>
+    /// <param name="appUid">
+    /// Only processes of this user (the app) and root (the cores) may reach <paramref name="allowed"/>;
+    /// null lets every process through (older behaviour, kept for callers without a uid).
+    /// </param>
+    /// <param name="allowLan">The local network (printers, NAS, the router page); off keeps only link-local, multicast and DHCP.</param>
+    internal static string BuildEngageScript(IEnumerable<IPAddress> allowed, int appPid, IEnumerable<string>? bypassNetworks = null, bool allowLan = true, uint? appUid = null)
     {
-        var v4 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetwork).Select(a => a.ToString()).ToList();
-        var v6 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6 && !a.IsIPv6LinkLocal).Select(a => a.ToString()).ToList();
+        var v4 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetwork).Select(a => a.ToString()).Distinct().ToList();
+        var v6 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6 && !a.IsIPv6LinkLocal).Select(a => a.ToString()).Distinct().ToList();
         // Only well-formed networks reach root's nft (the list is user input); the parsed form is written.
+        var bypass4 = new List<string>();
+        var bypass6 = new List<string>();
         foreach (var network in bypassNetworks ?? [])
         {
             if (ColituSplitTunnel.TryNormalizeNetwork(network, out var normalized, out var family))
             {
-                (family == AddressFamily.InterNetwork ? v4 : v6).Add(normalized);
+                (family == AddressFamily.InterNetwork ? bypass4 : bypass6).Add(normalized);
             }
         }
-        v4 = v4.Distinct().ToList();
-        v6 = v6.Distinct().ToList();
+        bypass4 = bypass4.Distinct().ToList();
+        bypass6 = bypass6.Distinct().ToList();
 
         var rules = new StringBuilder();
         rules.Append($"table inet {Table} {{").Append('\n');
@@ -137,17 +149,34 @@ public sealed class ColituKillSwitch
         // Russian sites, the cores' own traffic) carry this mark; only root can set it.
         rules.Append($"    meta mark 0x{Global.LinuxTunDirectRoutingMark:x} accept").Append('\n');
         rules.Append($"    oifname {{ {string.Join(", ", TunInterfaces.Select(name => $"\"{name}\""))} }} accept").Append('\n');
-        rules.Append($"    ip daddr {{ {string.Join(", ", LocalNetworks4)} }} accept").Append('\n');
-        rules.Append($"    ip6 daddr {{ {string.Join(", ", LocalNetworks6)} }} accept").Append('\n');
+        // DNS never leaves outside the tunnel: a resolver on the LAN or at the ISP would see the
+        // names. System lookups go to the TUN's resolver (sing-tun registers it with
+        // systemd-resolved, and LAN DNS is routed into the TUN and hijacked there); only a socket
+        // bound to the physical interface gets here. Root keeps it for the cores' own lookups.
+        rules.Append("    meta skuid != 0 udp dport 53 drop").Append('\n');
+        rules.Append("    meta skuid != 0 tcp dport 53 drop").Append('\n');
+        rules.Append($"    ip daddr {{ {string.Join(", ", allowLan ? LocalNetworks4 : LinkLocal4)} }} accept").Append('\n');
+        rules.Append($"    ip6 daddr {{ {string.Join(", ", allowLan ? LocalNetworks6 : LinkLocal6)} }} accept").Append('\n');
+        // DHCP by its client ports (only root can bind them), never "any program to port 67/547".
         rules.Append("    udp sport 68 udp dport 67 accept").Append('\n');
-        rules.Append("    udp dport 547 accept").Append('\n');
+        rules.Append("    meta nfproto ipv6 udp sport 546 udp dport 547 accept").Append('\n');
+        var owner = appUid is { } uid ? $"meta skuid {{ 0, {uid} }} " : "";
         if (v4.Count > 0)
         {
-            rules.Append($"    ip daddr {{ {string.Join(", ", v4)} }} accept").Append('\n');
+            rules.Append($"    {owner}ip daddr {{ {string.Join(", ", v4)} }} accept").Append('\n');
         }
         if (v6.Count > 0)
         {
-            rules.Append($"    ip6 daddr {{ {string.Join(", ", v6)} }} accept").Append('\n');
+            rules.Append($"    {owner}ip6 daddr {{ {string.Join(", ", v6)} }} accept").Append('\n');
+        }
+        // Networks the user excluded from the VPN: every program reaches them directly.
+        if (bypass4.Count > 0)
+        {
+            rules.Append($"    ip daddr {{ {string.Join(", ", bypass4)} }} accept").Append('\n');
+        }
+        if (bypass6.Count > 0)
+        {
+            rules.Append($"    ip6 daddr {{ {string.Join(", ", bypass6)} }} accept").Append('\n');
         }
         rules.Append("  }").Append('\n');
         rules.Append("}").Append('\n');
