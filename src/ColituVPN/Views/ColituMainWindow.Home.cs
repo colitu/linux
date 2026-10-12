@@ -114,7 +114,9 @@ public partial class ColituMainWindow
             : _planRequired ? loc["home.title.noplan"]
             : loc["home.title.off"];
         HomeSubtitle.Text = on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
-            : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked" : "home.sub.blocked"]
+            : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked"
+                : _vpn.KillSwitchHeldAfterFailure ? "home.sub.blockedFailed"
+                : "home.sub.blocked"]
             : busy ? loc[_vpn.ConnectStage ?? "home.sub.connecting"]
             : _planRequired ? loc["home.sub.noplan"]
             : status == ColituVpnStatus.Error && _vpn.LastError is { Length: > 0 } error ? error
