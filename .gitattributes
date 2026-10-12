@@ -61,3 +61,6 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# The root launcher runs under /bin/sh: always LF, even in a Windows checkout.
+scripts/colitu-core-root text eol=lf
