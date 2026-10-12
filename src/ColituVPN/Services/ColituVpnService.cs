@@ -2693,6 +2693,12 @@ public sealed class ColituVpnService
                         LogConnection($"parallel round: {candidate.Protocol} vs {Describe(plan)} → winner {winner} in {pairWatch.ElapsedMilliseconds} ms");
                     }
                     observations.Add(new ColituProtocolObservation { Protocol = candidate.Protocol, Reachable = probe.Success || graceOk, LatencyMs = probe.LatencyMs });
+                    if (plan != null && spareProbe != null && plan.NextServerId == null && plan.Protocol != candidate.Protocol)
+                    {
+                        // The spare ran on this node too: report it, or a transport that mostly runs as
+                        // the spare (XHTTP) only ever shows up when it failed as a primary.
+                        observations.Add(new ColituProtocolObservation { Protocol = plan.Protocol, Reachable = spareProbe.Success, LatencyMs = spareProbe.LatencyMs });
+                    }
                     if (outcome == ColituParallelOutcome.PrimaryWins)
                     {
                         _activeTransport = candidate.Protocol;
