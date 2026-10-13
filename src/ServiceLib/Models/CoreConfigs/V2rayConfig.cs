@@ -443,12 +443,6 @@ public class HysteriaSettings4Ray
     public string? auth { get; set; }
 }
 
-public class UdpHop4Ray
-{
-    public string? ports { get; set; }
-    public string? interval { get; set; }
-}
-
 public class Finalmask4Ray
 {
     public List<Mask4Ray>? tcp { get; set; }
@@ -468,6 +462,13 @@ public class MaskSettings4Ray
     public string? value { get; set; }
 
     public string? password { get; set; }
+
+    // udphop (Hysteria2 port hopping, Xray 26.9.8+): "intervalLocal,intervalRemote", seconds
+    // between hops (at least 5) and the server's port range "A-B".
+    public string? mode { get; set; }
+
+    public int? interval { get; set; }
+    public string? remotePorts { get; set; }
 
     public string? url { get; set; }
     public List<string>? stunServers { get; set; }
@@ -499,7 +500,6 @@ public class QuicParams4Ray
     public string? congestion { get; set; }
     public string? brutalUp { get; set; }
     public string? brutalDown { get; set; }
-    public UdpHop4Ray? udpHop { get; set; }
 }
 
 public class AccountsItem4Ray

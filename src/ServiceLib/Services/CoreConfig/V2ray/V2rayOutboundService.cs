@@ -515,16 +515,6 @@ public partial class CoreConfigV2rayService
                             : Global.Hysteria2DefaultHopInt).ToString();
                     var hy2Finalmask = new Finalmask4Ray();
                     var quicParams = new QuicParams4Ray();
-                    if (!ports.IsNullOrEmpty() &&
-                        (ports.Contains(':') || ports.Contains('-') || ports.Contains(',')))
-                    {
-                        var udpHop = new UdpHop4Ray
-                        {
-                            ports = ports.Replace(':', '-'),
-                            interval = hopInterval,
-                        };
-                        quicParams.udpHop = udpHop;
-                    }
                     if (upMbps > 0 || downMbps > 0)
                     {
                         quicParams.congestion = "brutal";
@@ -568,6 +558,22 @@ public partial class CoreConfigV2rayService
                         version = 2,
                         auth = _node.Password,
                     };
+                    // Port hopping (Xray 26.9.8+): the "udphop" UDP mask. The older finalmask.quicParams.udpHop is
+                    // ignored without an error, so hopping silently stopped. Added last: the list is reversed
+                    // below, and Xray only accepts a mask that dials at index 0.
+                    if (HopRange(ports) is { } hopRange)
+                    {
+                        hy2Finalmask.udp.Add(new Mask4Ray
+                        {
+                            type = "udphop",
+                            settings = new MaskSettings4Ray
+                            {
+                                mode = "intervalLocal,intervalRemote",
+                                interval = HopSeconds(hopInterval),
+                                remotePorts = hopRange,
+                            }
+                        });
+                    }
                     hy2Finalmask.udp?.Reverse();
                     streamSettings.finalmask = hy2Finalmask;
                     break;
@@ -875,5 +881,30 @@ public partial class CoreConfigV2rayService
             }
         }
         return clonedOutbounds;
+    }
+
+    /// <summary>The port range of an mport value ("20000-40000", "20000:40000" or a list "a-b,c"), for udphop; null when it is a single port.</summary>
+    public static string? HopRange(string? ports)
+    {
+        if (ports.IsNullOrEmpty() || !(ports.Contains(':') || ports.Contains('-') || ports.Contains(',')))
+        {
+            return null;
+        }
+        return ports.Replace(':', '-').Replace(" ", "");
+    }
+
+    /// <summary>Seconds between hops as Xray wants them (a number, at least 5); "20-40" takes its lower bound.</summary>
+    public static int HopSeconds(string? interval)
+    {
+        var text = (interval ?? "").Trim();
+        var dash = text.IndexOf('-');
+        if (dash > 0)
+        {
+            text = text[..dash];
+        }
+        var seconds = int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value) && value > 0
+            ? value
+            : Global.Hysteria2DefaultHopInt;
+        return Math.Max(5, seconds);
     }
 }

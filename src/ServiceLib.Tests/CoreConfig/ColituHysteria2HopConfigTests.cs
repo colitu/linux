@@ -3,8 +3,9 @@ namespace ServiceLib.Tests.CoreConfig;
 /// <summary>
 /// The panel adds mport=20000-40000 to hysteria2:// links of nodes that support port hopping
 /// (Russian mobile networks throttle a long-lived UDP flow on one port). Both cores must hop:
-/// sing-box with server_ports + hop_interval, Xray 26 with finalmask.quicParams.udpHop (the older
-/// hysteriaSettings.udphop shape is silently ignored by Xray 26). Without mport nothing changes.
+/// sing-box with server_ports + hop_interval, Xray 26.9.8+ with the "udphop" UDP mask in
+/// finalmask.udp (the older finalmask.quicParams.udpHop and hysteriaSettings.udphop shapes are
+/// silently ignored). Without mport nothing changes.
 /// </summary>
 public class ColituHysteria2HopConfigTests
 {
@@ -70,17 +71,34 @@ public class ColituHysteria2HopConfigTests
     }
 
     [Test]
-    public async Task Xray_WithMport_HopsThroughFinalmaskQuicParams()
+    public async Task Xray_WithMport_HopsThroughTheUdphopMask()
     {
         var stream = HysteriaStream(HopLink, out var success, out var msg);
 
         await success.Should().BeTrue().Because($"ret msg: {msg}");
-        var udpHop = stream["finalmask"]?["quicParams"]?["udpHop"];
-        await (udpHop != null).Should().BeTrue();
-        await udpHop!["ports"]!.GetValue<string>().Should().BeEqualTo("20000-40000");
-        await udpHop["interval"]!.GetValue<string>().Should().BeEqualTo("30");
-        // The pre-26 shape is ignored by Xray 26 and must not be relied on.
+
+        var udp = stream["finalmask"]!["udp"]!.AsArray();
+        await udp.Count.Should().BeEqualTo(1);
+        await udp[0]!["type"]!.GetValue<string>().Should().BeEqualTo("udphop");
+        var settings = udp[0]!["settings"]!;
+        await settings["mode"]!.GetValue<string>().Should().BeEqualTo("intervalLocal,intervalRemote");
+        await settings["interval"]!.GetValue<int>().Should().BeEqualTo(30);
+        await settings["remotePorts"]!.GetValue<string>().Should().BeEqualTo("20000-40000");
+        // The shapes Xray 26 ignores are not written.
+        await (stream["finalmask"]!["quicParams"]?["udpHop"] == null).Should().BeTrue();
         await (stream["hysteriaSettings"]?["udphop"] == null).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task Xray_WithMportAndSalamander_UdphopFirstThenSalamander()
+    {
+        var stream = HysteriaStream("hysteria2://secret@203.0.113.7:8443?sni=vpn.example.com&insecure=0&obfs=salamander&obfs-password=pw&mport=20000-40000#Colitu", out var success, out var msg);
+
+        await success.Should().BeTrue().Because($"ret msg: {msg}");
+
+        // Xray only accepts a mask that dials (udphop) at index 0 of the list.
+        var types = string.Join(",", stream["finalmask"]!["udp"]!.AsArray().Select(mask => mask!["type"]!.GetValue<string>()));
+        await types.Should().BeEqualTo("udphop,salamander");
     }
 
     [Test]
@@ -89,6 +107,20 @@ public class ColituHysteria2HopConfigTests
         var stream = HysteriaStream(PlainLink, out var success, out var msg);
 
         await success.Should().BeTrue().Because($"ret msg: {msg}");
+
+        var masks = stream["finalmask"]?["udp"]?.AsArray().Select(mask => mask!["type"]!.GetValue<string>()).ToList() ?? [];
+        await masks.Contains("udphop").Should().BeFalse();
         await (stream["finalmask"]?["quicParams"]?["udpHop"] == null).Should().BeTrue();
+    }
+
+    [Test]
+    [Arguments("30", 30)]
+    [Arguments("3", 5)]
+    [Arguments("20-40", 20)]
+    [Arguments("", 30)]
+    [Arguments("x", 30)]
+    public async Task HopSeconds_IsANumberOfAtLeastFive(string interval, int expected)
+    {
+        await CoreConfigV2rayService.HopSeconds(interval).Should().BeEqualTo(expected);
     }
 }
