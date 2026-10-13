@@ -56,7 +56,9 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Test
-        run: dotnet test --project src/ColituVPN.Tests -c Release
+        run: |
+          dotnet test --project src/ColituVPN.Tests -c Release
+          dotnet test --project src/ServiceLib.Tests -c Release
 
       - name: Publish
         env:

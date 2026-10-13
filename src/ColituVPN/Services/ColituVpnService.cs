@@ -123,9 +123,11 @@ public sealed class ColituVpnService
         // state file is an update, not a new install (first_connect_* stays untouched then).
         ColituInsights.Instance.Touch();
         LoadState();
-        // Kept on disk: an automatic connect right after start has no server list yet, and its
-        // first config still gets the TUN ping rule.
-        AppManager.Instance.PingRouteTargets = ColituLatency.LoadTargets(PingTargetsPath());
+        // The TUN ping rule's addresses are never read back from disk (L3-04): the file sat in the
+        // user's folder, so anything running as the user could have sent the app's direct traffic to
+        // addresses of its choice. They come from the server list at every connect; a file an
+        // earlier version kept is removed.
+        DeleteLegacyPingTargets();
         // The warm spare goes into the generated core config before the core starts.
         CoreConfigHandler.ClientConfigPostProcessor = PostProcessConfig;
         StartWatchdog();
@@ -837,6 +839,8 @@ public sealed class ColituVpnService
             else if (_killSwitch.IsEngaged)
             {
                 _killSwitchHeldAfterFailure = true;
+                // The network this failure happened on gets no automatic retry; another one does (once).
+                _heldRetryNetwork = CurrentNetworkKey();
                 LogConnection("Connection failed: the kill switch stays armed (fail-closed) until a retry connects or the user disconnects");
             }
             SetStatus(ColituVpnStatus.Error);
@@ -856,7 +860,7 @@ public sealed class ColituVpnService
                 throw;
             }
             // "No internet on this computer" stays visible to the caller (it is not counted as a failed connect).
-            throw new ColituConnectException(LastError, ex, offline: ex is ColituConnectException { Offline: true });
+            throw new ColituConnectException(LastError, ex, offline: ColituConnectException.IsOffline(ex));
         }
     }
 
@@ -1072,7 +1076,17 @@ public sealed class ColituVpnService
     /// list yet, as at an automatic connect right after start) keeps the previous addresses; the
     /// next core start uses the new ones.
     /// </summary>
-    private static string PingTargetsPath() => ColituHardening.UserConfigPath("colitu-ping-targets.json");
+    private static void DeleteLegacyPingTargets()
+    {
+        try
+        {
+            File.Delete(ColituHardening.UserConfigPath("colitu-ping-targets.json"));
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
 
     private static async Task RefreshPingRouteTargetsAsync(IEnumerable<ColituVpnServer> servers, TimeSpan budget, CancellationToken token = default)
     {
@@ -1082,7 +1096,6 @@ public sealed class ColituVpnService
             if (targets.Count > 0 && !targets.SequenceEqual(AppManager.Instance.PingRouteTargets))
             {
                 AppManager.Instance.PingRouteTargets = targets;
-                ColituLatency.SaveTargets(PingTargetsPath(), targets);
             }
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
@@ -1801,16 +1814,8 @@ public sealed class ColituVpnService
             // Best effort.
         }
         DeleteRecoverySet();
-        // The kept ping targets are this account's server addresses.
+        // The ping targets are this account's server addresses.
         AppManager.Instance.PingRouteTargets = [];
-        try
-        {
-            File.Delete(PingTargetsPath());
-        }
-        catch
-        {
-            // Best effort.
-        }
         _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null };
         try
         {
@@ -1846,7 +1851,53 @@ public sealed class ColituVpnService
                 _networkKey = CurrentNetworkKey();
                 _ = VerifyAfterResumeAsync();
             }
+            else if (KillSwitchHeldAfterFailure)
+            {
+                _ = RetryHeldConnectOnNewNetworkAsync();
+            }
         };
+    }
+
+    /// <summary>The network the last held retry (or the failure) was on.</summary>
+    private string? _heldRetryNetwork;
+    private int _heldRetryBusy;
+
+    /// <summary>
+    /// Fail-closed after a failed connect: when the network changes (another Wi-Fi, the adapter came
+    /// back) one automatic retry runs per network; the internet stays closed until it connects.
+    /// </summary>
+    private async Task RetryHeldConnectOnNewNetworkAsync()
+    {
+        if (Interlocked.Exchange(ref _heldRetryBusy, 1) == 1)
+        {
+            return;
+        }
+        try
+        {
+            // Several address events per change: act once things have settled.
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            var network = CurrentNetworkKey();
+            if (!KillSwitchHeldAfterFailure || _userDisconnected || _connectionLock.CurrentCount == 0
+                || string.Equals(network, _heldRetryNetwork, StringComparison.Ordinal))
+            {
+                return;
+            }
+            _heldRetryNetwork = network;
+            LogConnection("Network changed while the kill switch holds after a failed connect; retrying once");
+            try
+            {
+                await ConnectSavedAsync();
+            }
+            catch (Exception ex)
+            {
+                LogConnection($"Retry after the network change failed: {ex.Message}");
+            }
+            StatusChanged?.Invoke(Status);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _heldRetryBusy, 0);
+        }
     }
 
     private async Task WatchdogTickAsync()
@@ -3061,7 +3112,7 @@ public sealed class ColituVpnService
                     throw new InvalidOperationException("Imported server could not be selected as default.");
                 }
                 _attemptProtocol = candidate.Protocol;
-                LogConnection($"Trying transport {candidate.Protocol}: index={profile.IndexId}, address={profile.Address}:{profile.Port}");
+                LogConnection($"Trying transport {candidate.Protocol}: index={profile.IndexId}, address={ColituLogPrivacy.ForLog(profile.Address)}:{profile.Port}");
 
                 try
                 {
@@ -4012,6 +4063,19 @@ public sealed class ColituConnectException(string message, Exception? inner = nu
 {
     /// <summary>The device itself had no internet: no server or transport is to blame.</summary>
     public bool Offline { get; } = offline;
+
+    /// <summary>Whether <paramref name="ex"/> or an exception it wraps says this computer was offline.</summary>
+    public static bool IsOffline(Exception? ex)
+    {
+        for (; ex != null; ex = ex.InnerException)
+        {
+            if (ex is ColituConnectException { Offline: true })
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 public sealed class ColituDashboardData

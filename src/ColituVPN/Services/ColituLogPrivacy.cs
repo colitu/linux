@@ -52,6 +52,47 @@ public static partial class ColituLogPrivacy
         return string.Join('\n', kept);
     }
 
+    /// <summary>
+    /// A server, mirror or resolved address as the app's own log lines show it: colitu.com names
+    /// as they are; other names only by their last label ("***.org"); IPv4 by its first two
+    /// octets ("203.0.x.x"), IPv6 by its first two groups. Enough to tell a network problem from a
+    /// DNS one, without node or mirror names and addresses in a log that may be sent to support.
+    /// </summary>
+    public static string ForLog(string? hostOrAddress)
+    {
+        var value = hostOrAddress?.Trim().Trim('[', ']') ?? "";
+        if (value.Length == 0)
+        {
+            return "?";
+        }
+        if (System.Net.IPAddress.TryParse(value, out var address))
+        {
+            if (System.Net.IPAddress.IsLoopback(address))
+            {
+                return value;
+            }
+            if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                var bytes = address.GetAddressBytes();
+                return $"{bytes[0]}.{bytes[1]}.x.x";
+            }
+            var groups = address.ToString().Split(':');
+            return groups.Length >= 2 ? $"{groups[0]}:{groups[1]}::x" : "::x";
+        }
+        var host = value.TrimEnd('.');
+        if (host.Equals("colitu.com", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".colitu.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return host;
+        }
+        var dot = host.LastIndexOf('.');
+        return dot > 0 && dot < host.Length - 1 ? "***" + host[dot..] : "***";
+    }
+
+    /// <summary><see cref="ForLog(string?)"/> for a list of addresses.</summary>
+    public static string ForLog(IEnumerable<System.Net.IPAddress> addresses) =>
+        string.Join(", ", addresses.Select(address => ForLog(address.ToString())));
+
     internal static bool IsTrafficLine(string line)
     {
         return TrafficLine().IsMatch(line);

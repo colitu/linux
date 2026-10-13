@@ -259,11 +259,11 @@ public sealed class ColituApiClient
             if (address != null)
             {
                 pinned[host!] = address.ToString();
-                Logging.SaveLog($"ColituApiClient | Server {host} resolved to {address}");
+                Logging.SaveLog($"ColituApiClient | Server {ColituLogPrivacy.ForLog(host)} resolved to {ColituLogPrivacy.ForLog(address.ToString())}");
             }
             else
             {
-                Logging.SaveLog($"ColituApiClient | Server {host} could not be resolved ahead of the core; the core will resolve it");
+                Logging.SaveLog($"ColituApiClient | Server {ColituLogPrivacy.ForLog(host)} could not be resolved ahead of the core; the core will resolve it");
             }
         }
         return pinned;

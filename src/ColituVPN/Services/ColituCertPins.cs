@@ -87,7 +87,7 @@ public static class ColituCertPins
         }
         try
         {
-            Logging.SaveLog($"CERT_PIN_MISMATCH {host ?? "?"}");
+            Logging.SaveLog($"CERT_PIN_MISMATCH {ColituLogPrivacy.ForLog(host)}");
         }
         catch
         {

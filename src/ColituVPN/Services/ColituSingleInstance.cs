@@ -43,6 +43,8 @@ public sealed class ColituSingleInstance : IDisposable
                 else
                 {
                     Directory.CreateDirectory(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                    // CreateDirectory leaves an existing folder's mode as it was.
+                    File.SetUnixFileMode(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
                 }
             }
             catch

@@ -946,7 +946,7 @@ public sealed class ColituAuthService
         try
         {
             // Write-then-rename so a crash or power loss never leaves a torn session file.
-            ColituHardening.WritePrivateText(SessionPath(), JsonSerializer.Serialize(_session, _jsonOptions));
+            ColituHardening.WritePrivateText(SessionPath(), JsonSerializer.Serialize(ForDisk(_session), _jsonOptions));
         }
         catch (Exception ex)
         {
@@ -963,6 +963,17 @@ public sealed class ColituAuthService
             _accessToken = Unprotect(_session.AccessToken);
             _refreshToken = Unprotect(_session.RefreshToken);
             _accessTokenExpiresAt = ParseJwtExpiry(_accessToken);
+            // Files before 1.5.1 kept the account details (e-mail, name) in plain text: rewritten encrypted.
+            var plainProfile = string.IsNullOrEmpty(_session.Profile)
+                && (_session.CachedUser != null || _session.CachedSubscription != null || _session.PendingEmail != null);
+            if (!string.IsNullOrEmpty(_session.Profile))
+            {
+                RestoreProfile(_session);
+            }
+            if (plainProfile)
+            {
+                PersistSession();
+            }
         }
         catch (Exception ex)
         {
@@ -1194,6 +1205,46 @@ public sealed class ColituAuthService
             : Loc.I["err.network"];
     }
 
+    /// <summary>
+    /// What is written to disk (owner-only file): the tokens (already encrypted) and the device
+    /// fields as they are, and the account details (e-mail, name, plan) as one encrypted blob
+    /// instead of plain text (as on Windows).
+    /// </summary>
+    internal static ColituSession ForDisk(ColituSession session) => new()
+    {
+        AccessToken = session.AccessToken,
+        RefreshToken = session.RefreshToken,
+        RegisteredDeviceId = session.RegisteredDeviceId,
+        RegisteredAppVersion = session.RegisteredAppVersion,
+        ApiBaseUrl = session.ApiBaseUrl,
+        UpdatedAt = session.UpdatedAt,
+        Profile = Protect(JsonSerializer.Serialize(new ColituSessionProfile
+        {
+            CachedUser = session.CachedUser,
+            CachedSubscription = session.CachedSubscription,
+            PendingEmail = session.PendingEmail
+        }, ProfileJson))
+    };
+
+    private static readonly JsonSerializerOptions ProfileJson = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>Fills the account details from the encrypted blob; they stay empty when it cannot be read.</summary>
+    internal static void RestoreProfile(ColituSession session)
+    {
+        try
+        {
+            var profile = JsonSerializer.Deserialize<ColituSessionProfile>(Unprotect(session.Profile) ?? "", ProfileJson);
+            session.CachedUser = profile?.CachedUser;
+            session.CachedSubscription = profile?.CachedSubscription;
+            session.PendingEmail = profile?.PendingEmail;
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituAuthService.RestoreProfile: {ex.GetType().Name}");
+        }
+        session.Profile = null;
+    }
+
     private static string Protect(string value) => ColituHardening.Protect(value);
 
     private static string? Unprotect(string? value) => ColituHardening.Unprotect(value);
@@ -1385,7 +1436,17 @@ internal sealed class ColituSession
     public string? RegisteredAppVersion { get; set; }
     public string? ApiBaseUrl { get; set; }
     public string? PendingEmail { get; set; }
+    /// <summary>On disk only: <see cref="CachedUser"/>, <see cref="CachedSubscription"/> and <see cref="PendingEmail"/>, encrypted.</summary>
+    public string? Profile { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>The account details of a <see cref="ColituSession"/>, kept encrypted on disk.</summary>
+internal sealed class ColituSessionProfile
+{
+    public ColituUser? CachedUser { get; set; }
+    public ColituSubscription? CachedSubscription { get; set; }
+    public string? PendingEmail { get; set; }
 }
 
 // ── Panel wire formats (snake_case) ─────────────────────────────────────────

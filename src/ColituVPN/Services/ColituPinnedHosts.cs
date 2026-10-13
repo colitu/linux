@@ -133,11 +133,11 @@ public static class ColituPinnedHosts
                 budget.Cancel();
                 if (Set(host!, [doh, .. others]))
                 {
-                    Logging.SaveLog($"ColituPinnedHosts | {host} pinned to {string.Join(", ", AddressesOf(host))}");
+                    Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} pinned to {ColituLogPrivacy.ForLog(AddressesOf(host))}");
                 }
                 else
                 {
-                    Logging.SaveLog($"ColituPinnedHosts | {host} could not be resolved; keeping {(AddressesOf(host).Count > 0 ? string.Join(", ", AddressesOf(host)) : "no addresses")}");
+                    Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} could not be resolved; keeping {(AddressesOf(host).Count > 0 ? ColituLogPrivacy.ForLog(AddressesOf(host)) : "no addresses")}");
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -146,7 +146,7 @@ public static class ColituPinnedHosts
             }
             catch (Exception ex)
             {
-                Logging.SaveLog($"ColituPinnedHosts | {host}: {ex.Message}");
+                Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)}: {ex.GetType().Name}");
             }
         }
     }

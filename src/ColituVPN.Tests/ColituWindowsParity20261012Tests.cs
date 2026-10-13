@@ -10,8 +10,7 @@ namespace ColituVPN.Tests;
 
 /// <summary>
 /// 2026-10-12, the Windows changes on Linux: the kill switch stays closed when a connect fails
-/// (fail-closed), ad-blocking resolvers from the panel's bootstrap, the TUN ping targets kept for
-/// the first automatic connect, stale update packages removed, unique Xray rule tags (26.10),
+/// (fail-closed), ad-blocking resolvers from the panel's bootstrap, stale update packages removed, unique Xray rule tags (26.10),
 /// pinned cores in the package script, and an old profile database opening with sqlite-net 1.11.
 /// </summary>
 public class ColituWindowsParity20261012Tests : IDisposable
@@ -52,7 +51,7 @@ public class ColituWindowsParity20261012Tests : IDisposable
         try
         {
             Loc.I.SetLanguage(language);
-            Loc.I["home.sub.blockedFailed"].Should().Be(expected);
+            Loc.I["home.sub.blockedFailed"].Should().StartWith(expected).And.Contain("Wi-Fi");
         }
         finally
         {
@@ -102,19 +101,12 @@ public class ColituWindowsParity20261012Tests : IDisposable
         File.ReadAllText(path).Should().Contain("dns-a.example.test");
     }
 
-    // ── Ping targets kept for the first connect ──────────────────────────
+    // ── Ping targets are never read from the user's folder (L3-04) ─────
     [Fact]
-    public void PingTargets_SavedAndLoaded_OnlyPublicIpv4()
+    public void PingTargets_NotReadFromDisk()
     {
-        var path = Path.Combine(_folder, "targets.json");
-        ColituLatency.LoadTargets(path).Should().BeEmpty();
-        ColituLatency.SaveTargets(path, ["203.0.113.7", "198.51.100.20"]);
-        ColituLatency.LoadTargets(path).Should().Equal("203.0.113.7", "198.51.100.20");
-        // An edited file: private, loopback and non-addresses are dropped.
-        File.WriteAllText(path, """["10.0.0.1","127.0.0.1","192.168.1.1","x","203.0.113.9"]""");
-        ColituLatency.LoadTargets(path).Should().Equal("203.0.113.9");
-        File.WriteAllText(path, "{ broken");
-        ColituLatency.LoadTargets(path).Should().BeEmpty();
+        var service = File.ReadAllText(Path.Combine(AppSource(), "Services", "ColituVpnService.cs"));
+        service.Should().NotContain("LoadTargets(").And.NotContain("SaveTargets(").And.Contain("DeleteLegacyPingTargets();");
     }
 
     // ── Stale update packages ────────────────────────────────────────────

@@ -72,7 +72,8 @@ $manifest = [ordered]@{
     latestVersionCode = $versionCode
     versionName = $Version
     forceUpdate = $force
-    releaseNotes = $ReleaseNotes
+    # Not covered by the signature: always empty, so nothing unsigned could ever be shown.
+    releaseNotes = ""
     deb = [ordered]@{ url = $debUrl; sha256 = $debSha }
     rpm = [ordered]@{ url = $rpmUrl; sha256 = $rpmSha }
     issued_at = $issuedAtText
