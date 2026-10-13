@@ -5,6 +5,9 @@ public partial class AddServerViewModel : MyReactiveObject, ICloseable
     public event EventHandler? RequestClose;
 
     [Reactive]
+    public partial string Network { get; set; }
+
+    [Reactive]
     public partial ProfileItem SelectedSource { get; set; }
 
     [Reactive]
@@ -268,9 +271,14 @@ public partial class AddServerViewModel : MyReactiveObject, ICloseable
         this.WhenAnyValue(x => x.CertSha)
             .Subscribe(_ => UpdateCertTip());
 
-        this.WhenAnyValue(x => x.SelectedSource.Network)
-            .Subscribe(_ =>
+        this.WhenAnyValue(x => x.Network)
+            .Subscribe(network =>
             {
+                // The transport fields below read SelectedSource.Network: keep it in step.
+                if (SelectedSource != null && network != null)
+                {
+                    SelectedSource.Network = network;
+                }
                 this.RaisePropertyChanged(nameof(TransportHeaderType));
                 this.RaisePropertyChanged(nameof(TransportHost));
                 this.RaisePropertyChanged(nameof(TransportPath));
@@ -291,6 +299,7 @@ public partial class AddServerViewModel : MyReactiveObject, ICloseable
             SelectedSource = JsonUtils.DeepCopy(profileItem);
         }
         CoreType = SelectedSource?.CoreType?.ToString();
+        Network = SelectedSource?.Network ?? Global.DefaultNetwork;
         AllowInsecure = SelectedSource?.GetAllowInsecure() == true;
         MuxEnabled = SelectedSource?.MuxEnabled == true;
         Cert = SelectedSource?.Cert ?? string.Empty;
@@ -397,10 +406,11 @@ public partial class AddServerViewModel : MyReactiveObject, ICloseable
         SelectedSource.MuxEnabled = MuxEnabled;
         SelectedSource.Cert = Cert.IsNullOrEmpty() ? string.Empty : Cert;
         SelectedSource.CertSha = CertSha.IsNullOrEmpty() ? string.Empty : CertSha;
-        if (!Global.Networks.Contains(SelectedSource.Network))
+        if (!Global.Networks.Contains(Network))
         {
-            SelectedSource.Network = Global.DefaultNetwork;
+            Network = Global.DefaultNetwork;
         }
+        SelectedSource.Network = Network;
 
         var transport = new TransportExtraItem
         {
