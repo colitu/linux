@@ -15,6 +15,9 @@ namespace ServiceLib.Common;
 /// from the install folder; no sing-box tor outbound; Xray "ext:" files only by name; every inbound
 /// except the TUN device, and sing-box's control API (with a secret), listen on loopback only; no
 /// sing-box v2ray_api.
+/// 2026-10-13 audit (L3-02, L3-03): every other "listen" too (Xray api, metrics) is loopback only;
+/// no sing-box services (DERP, resolved, SSM API...); sing-box endpoints only WireGuard and without
+/// a listen_port; no Xray Lua script (routing/dns "script": gopher-lua with os/io runs as root).
 /// </summary>
 public static class RootConfigPolicy
 {
@@ -78,6 +81,11 @@ public static class RootConfigPolicy
                 {
                     return "v2ray_api";
                 }
+                // sing-box services listen on the network themselves (DERP, resolved, SSM API...).
+                if (kind == "sing-box" && frames.Count == 3 && frames[1].Key == "services" && frames[2].Key == "[]")
+                {
+                    return "sing-box services";
+                }
                 foreach (var member in container.EnumerateObject())
                 {
                     if (Visit(member.Name, member.Value, frames, kind, here) is { } reason)
@@ -93,6 +101,22 @@ public static class RootConfigPolicy
                     if (protocol != "tun" && !IsLoopbackListen(StringMember(container, "listen")))
                     {
                         return "inbound not on loopback";
+                    }
+                }
+                // Any other listener (Xray api and metrics, a sing-box endpoint): loopback only.
+                else if (StringMember(container, "listen") is { Length: > 0 } listen && !IsLoopbackListen(listen))
+                {
+                    return "listener not on loopback";
+                }
+                if (kind == "sing-box" && frames.Count == 3 && frames[1].Key == "endpoints" && frames[2].Key == "[]")
+                {
+                    if (StringMember(container, "type") != "wireguard")
+                    {
+                        return "sing-box endpoint other than WireGuard";
+                    }
+                    if (container.TryGetProperty("listen_port", out _))
+                    {
+                        return "endpoint listen_port";
                     }
                 }
                 if (kind == "sing-box" && key == "clash_api"
@@ -163,6 +187,11 @@ public static class RootConfigPolicy
             if (key is "access" or "error" && current.Key == "log" && value is not ("" or "none"))
             {
                 return "log file";
+            }
+            // Xray 26.10 routing/dns Lua scripts run in gopher-lua with os and io: never as root.
+            if (key == "script" && value.Length > 0)
+            {
+                return "Lua script";
             }
             if ((value.StartsWith("ext:", StringComparison.OrdinalIgnoreCase) || value.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
                 && (value.IndexOfAny(['/', '\\']) >= 0 || value.Contains("..", StringComparison.Ordinal)))

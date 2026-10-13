@@ -14,6 +14,24 @@ public static class CoreConfigHandler
     /// </summary>
     public static Func<CoreConfigContext, string, string>? ClientConfigPostProcessor { get; set; }
 
+    /// <summary>SHA-256 of the client config last written per file name (binConfigs): what the app generated.</summary>
+    private static readonly ConcurrentDictionary<string, string> WrittenHashes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The SHA-256 (lowercase hex) of the client config this app generated and wrote to
+    /// <paramref name="fileName"/>; null when it wrote none there. TUN mode runs only that config as
+    /// root: a file changed between the write and the read is refused (CoreAdminManager).
+    /// </summary>
+    public static string? WrittenConfigHash(string fileName) =>
+        WrittenHashes.TryGetValue(Path.GetFileName(fileName), out var hash) ? hash : null;
+
+    private static async Task WriteClientConfigAsync(string fileName, string content)
+    {
+        var bytes = new UTF8Encoding(false).GetBytes(content);
+        WrittenHashes[Path.GetFileName(fileName)] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await File.WriteAllBytesAsync(fileName, bytes);
+    }
+
     public static async Task<RetResult> GenerateClientConfig(CoreConfigContext context, string? fileName)
     {
         var config = AppManager.Instance.Config;
@@ -46,7 +64,7 @@ public static class CoreConfigHandler
         }
         if (fileName.IsNotEmpty() && result.Data != null)
         {
-            await File.WriteAllTextAsync(fileName, result.Data.ToString());
+            await WriteClientConfigAsync(fileName, result.Data.ToString()!);
         }
 
         return result;

@@ -63,6 +63,13 @@ public class CoreAdminManager
         // refuses a copy with any other hash (a config changed between this check and the copy).
         var configBytes = File.ReadAllBytes(configFile);
         var configHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(configBytes)).ToLowerInvariant();
+        // ...and they are the bytes this app generated: a file changed in the user's folder between
+        // the app's write and this read (or a config the app never wrote) does not reach root.
+        if (!string.Equals(CoreConfigHandler.WrittenConfigHash(configFile), configHash, StringComparison.Ordinal))
+        {
+            Logging.SaveLog($"{_tag}: config not run as root (it is not the config this app wrote)");
+            throw new UnauthorizedAccessException($"{RootConfigPolicy.RefusedMarker}: the config is not the one this app wrote");
+        }
         // The same check the launcher makes, here first for a readable error.
         if (!RootConfigPolicy.Check(System.Text.Encoding.UTF8.GetString(configBytes).TrimStart('﻿'), kind, Path.GetDirectoryName(launcher) ?? "", out var configReason))
         {

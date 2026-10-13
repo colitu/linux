@@ -21,7 +21,9 @@
 #   - relative paths (cache_file "cache.db") resolve in /run/colitu-vpn, the core's working folder,
 #   - no sing-box "tor" outbound (it starts an external program), Xray "ext:" files only by name,
 #   - every inbound except the TUN device listens on loopback; sing-box's clash_api only on
-#     loopback and with a secret; no sing-box v2ray_api.
+#     loopback and with a secret; no sing-box v2ray_api,
+#   - every other "listen" (Xray api, metrics) only on loopback; no sing-box services; sing-box
+#     endpoints only WireGuard and without listen_port; no Xray Lua "script" (os/io as root).
 # The core then runs the root-owned copy that was checked, with a clean environment; Xray reads
 # geoip.dat/geosite.dat from this folder (XRAY_LOCATION_ASSET), never from the user's folder.
 #
@@ -71,6 +73,7 @@ function check(k, v,    lower) {
     }
   } else {
     if ((k == "access" || k == "error") && ckey[depth] == "log" && v != "" && v != "none") fail("log file")
+    if (k == "script" && v != "") fail("Lua script")
     lower = tolower(v)
     if (lower ~ /^ext[:-]/ &&(v ~ /[\/\\]/ || v ~ /\.\./)) fail("ext: file outside the asset folder")
     if (k == "path" || k == "serviceName") return
@@ -115,12 +118,20 @@ BEGIN {
     ilisten[depth] = ""; iproto[depth] = ""
     isclash[depth] = (!isarr[depth] && kind == "sing-box" && ckey[depth] == "clash_api")
     csecret[depth] = ""; cctl[depth] = ""
+    olisten[depth] = ""
+    # A sing-box endpoint: an object right inside the top-level "endpoints" array.
+    isend[depth] = (!isarr[depth] && kind == "sing-box" && depth == 3 && ckey[2] == "endpoints" && isarr[2])
+    etype[depth] = ""; eport[depth] = 0
     if (kind == "sing-box" && ckey[depth] == "v2ray_api") fail("v2ray_api")
+    if (kind == "sing-box" && depth == 3 && ckey[2] == "services" && isarr[2]) fail("sing-box services")
     next
   }
   if (rest ~ /^[}\]],?$/) {
     if (haskey || depth == 0 || (substr(rest, 1, 1) == "]") != isarr[depth]) fail("unexpected line")
     if (inb[depth] && iproto[depth] != "tun" && !loopback(ilisten[depth])) fail("inbound not on loopback")
+    if (!inb[depth] && olisten[depth] != "" && !loopback(olisten[depth])) fail("listener not on loopback")
+    if (isend[depth] && etype[depth] != "wireguard") fail("sing-box endpoint other than WireGuard")
+    if (isend[depth] && eport[depth]) fail("endpoint listen_port")
     if (isclash[depth] && (csecret[depth] == "" || !loopback(cctl[depth]))) fail("control API not on loopback with a secret")
     inb[depth] = 0; isclash[depth] = 0
     depth--
@@ -132,6 +143,8 @@ BEGIN {
     value = substr(rest, 2, length(rest) - 2)
     effkey = haskey ? key : ckey[depth]
     if (haskey && key == "type") ctype[depth] = value
+    if (haskey && key == "listen" && !isarr[depth]) olisten[depth] = value
+    if (haskey && isend[depth] && key == "type") etype[depth] = value
     if (haskey && inb[depth]) {
       if (key == "listen") ilisten[depth] = value
       if (key == (kind == "xray" ? "protocol" : "type")) iproto[depth] = value
@@ -143,6 +156,7 @@ BEGIN {
     check(effkey, value)
     next
   }
+  if (haskey && key == "listen_port" && depth > 0 && isend[depth]) eport[depth] = 1
   if (rest ~ /^-?[0-9][0-9.eE+-]*$/ || rest == "true" || rest == "false" || rest == "null" || rest == "{}" || rest == "[]") next
   fail("unexpected line")
 }

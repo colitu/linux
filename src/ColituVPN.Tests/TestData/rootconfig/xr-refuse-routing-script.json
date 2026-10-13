@@ -1,0 +1,201 @@
+{
+    "dns": {
+        "disableCache": false,
+        "disableFallback": false,
+        "disableFallbackIfMatch": false,
+        "enableParallelQuery": false,
+        "serveExpiredTTL": 0,
+        "serveStale": false,
+        "servers": [
+            {
+                "address": "https://192.0.2.53/dns-query",
+                "finalQuery": false,
+                "port": 0,
+                "skipFallback": false,
+                "timeoutMs": 0
+            },
+            {
+                "address": "localhost",
+                "domains": [
+                    "geosite:category-ru"
+                ],
+                "finalQuery": false,
+                "port": 0,
+                "skipFallback": false,
+                "timeoutMs": 0
+            }
+        ],
+        "useSystemHosts": false
+    },
+    "inbounds": [
+        {
+            "protocol": "tun",
+            "settings": {
+                "name": "xray_tun",
+                "MTU": 9000,
+                "gateway": [
+                    "172.18.0.1/30"
+                ],
+                "autoSystemRoutingTable": [
+                    "0.0.0.0/0",
+                    "::/0"
+                ]
+            },
+            "tag": "tun"
+        },
+        {
+            "listen": "127.0.0.1",
+            "port": 10808,
+            "protocol": "socks",
+            "settings": {
+                "udp": true,
+                "auth": "noauth"
+            },
+            "tag": "socks"
+        }
+    ],
+    "log": {
+        "access": "none",
+        "dnsLog": false,
+        "loglevel": "warning"
+    },
+    "outbounds": [
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "192.0.2.10",
+                        "port": 443,
+                        "users": [
+                            {
+                                "id": "00000000-0000-0000-0000-000000000000",
+                                "encryption": "none"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "port": 0,
+                "security": "tls",
+                "tlsSettings": {
+                    "allowInsecure": false,
+                    "disableSystemRoot": false,
+                    "enableSessionResumption": false,
+                    "fingerprint": "chrome",
+                    "rejectUnknownSni": false,
+                    "serverName": "node.example.com"
+                },
+                "wsSettings": {
+                    "acceptProxyProtocol": false,
+                    "heartbeatPeriod": 0,
+                    "path": "/ws?ed=2048"
+                }
+            },
+            "tag": "proxy"
+        },
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "node.example.com",
+                        "port": 443,
+                        "users": [
+                            {
+                                "id": "00000000-0000-0000-0000-000000000000",
+                                "encryption": "none"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "xhttp",
+                "port": 0,
+                "xhttpSettings": {
+                    "mode": "auto",
+                    "noGRPCHeader": false,
+                    "noSSEHeader": false,
+                    "path": "/x",
+                    "scMaxBufferedPosts": 0,
+                    "scMaxEachPostBytes": 0,
+                    "scMinPostsIntervalMs": 0,
+                    "scStreamUpServerSecs": 0,
+                    "serverMaxHeaderBytes": 0,
+                    "uplinkChunkSize": 0,
+                    "xPaddingBytes": 0,
+                    "xPaddingObfsMode": false,
+                    "xmux": {
+                        "cMaxReuseTimes": 0,
+                        "hKeepAlivePeriod": 0,
+                        "hMaxRequestTimes": 0,
+                        "hMaxReusableSecs": 0,
+                        "maxConcurrency": 0,
+                        "maxConnections": 0
+                    }
+                }
+            },
+            "tag": "proxy-x"
+        },
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "node.example.com",
+                        "port": 443,
+                        "users": [
+                            {
+                                "id": "00000000-0000-0000-0000-000000000000",
+                                "encryption": "none"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "grpcSettings": {
+                    "health_check_timeout": 0,
+                    "idle_timeout": 0,
+                    "initial_windows_size": 0,
+                    "multiMode": false,
+                    "permit_without_stream": false,
+                    "serviceName": "/custom/path"
+                },
+                "network": "grpc",
+                "port": 0
+            },
+            "tag": "proxy-g"
+        },
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        }
+    ],
+    "routing": {
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
+            {
+                "type": "field",
+                "domain": [
+                    "geosite:category-ru",
+                    "ext:custom.dat:ru"
+                ],
+                "outboundTag": "direct"
+            },
+            {
+                "type": "field",
+                "ip": [
+                    "geoip:ru",
+                    "geoip:private",
+                    "10.0.0.0/8"
+                ],
+                "outboundTag": "direct"
+            }
+        ],
+        "script": "rules.lua"
+    }
+}
