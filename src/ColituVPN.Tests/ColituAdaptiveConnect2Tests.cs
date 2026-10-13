@@ -283,7 +283,7 @@ public class ColituAdaptiveConnect2Tests
     public void Singbox_SpareCheckInbound_GoesToTheSpareOnly()
     {
         const string singbox = """
-        { "inbounds": [], "outbounds": [ { "type": "hysteria2", "tag": "proxy" }, { "type": "direct", "tag": "direct" } ],
+        { "inbounds": [], "outbounds": [ { "type": "hysteria2", "tag": "proxy", "tls": { "enabled": true } }, { "type": "direct", "tag": "direct" } ],
           "dns": { "servers": [ { "tag": "remote", "type": "https", "server": "dns.example.net", "detour": "proxy" } ] }, "route": { "rules": [], "final": "proxy" } }
         """;
         var spare = JsonNode.Parse("""{ "type": "vless", "tag": "proxy" }""")!.AsObject();

@@ -924,7 +924,8 @@ public sealed class ColituVpnService
         var items = config.Candidates
             .Select(candidate => (candidate.Protocol, Item: FmtHandler.ResolveConfig(candidate.ShareLink, out _)))
             .Where(item => item.Item != null && item.Protocol.IsNotEmpty())
-            .Select(item => (item.Protocol, Item: item.Item!))
+            // The import defaults (TLS for Hysteria2/TUIC): without them sing-box would not start at all.
+            .Select(item => (item.Protocol, Item: ColituWarmSpare.NormalizeSpareProfile(item.Item!)))
             .ToList();
         foreach (var (_, item) in items)
         {

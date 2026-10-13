@@ -153,6 +153,47 @@ public static class ColituWarmSpare
         offered.Where(protocol => !string.IsNullOrEmpty(protocol) && RunsOn(protocol, singBox) && !stalled(protocol) && !excluded(protocol))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A spare server's transport parsed straight from its share link gets the defaults that
+    /// <see cref="ConfigHandler"/> gives every imported profile (without storing it). Colitu's
+    /// hysteria2:// links carry sni but no security=tls, and the cores add TLS only when the profile's
+    /// StreamSecurity says so: a Hysteria2 spare from the next server went into the sing-box config
+    /// without "tls" and the whole core failed with "TLS required" (as on Windows until 2.9.0).
+    /// </summary>
+    public static ProfileItem NormalizeSpareProfile(ProfileItem item)
+    {
+        switch (item.ConfigType)
+        {
+            case EConfigType.Hysteria2:
+                item.Fingerprint = string.Empty;
+                item.Alpn = string.Empty;
+                item.Network = string.Empty;
+                if (string.IsNullOrEmpty(item.StreamSecurity))
+                {
+                    item.StreamSecurity = Global.StreamSecurity;
+                }
+                break;
+            case EConfigType.TUIC:
+                item.CoreType = ECoreType.sing_box;
+                item.Network = string.Empty;
+                item.Fingerprint = string.Empty;
+                if (!Global.TuicCongestionControls.Contains(item.GetProtocolExtra().CongestionControl))
+                {
+                    item.SetProtocolExtra(item.GetProtocolExtra() with { CongestionControl = Global.TuicCongestionControls.FirstOrDefault()! });
+                }
+                if (string.IsNullOrEmpty(item.StreamSecurity))
+                {
+                    item.StreamSecurity = Global.StreamSecurity;
+                }
+                if (string.IsNullOrEmpty(item.Alpn))
+                {
+                    item.Alpn = "h3";
+                }
+                break;
+        }
+        return item;
+    }
+
     /// <summary>The outbound with <paramref name="tag"/> of a generated config (a copy); null when there is none.</summary>
     public static JsonObject? FindOutbound(string config, string tag = ProxyTag)
     {
@@ -470,6 +511,12 @@ public static class ColituWarmSpare
             if (Str(outbound["detour"]) is { } detour && !tags.Contains(detour))
             {
                 problems.Add($"outbound {Tag(outbound)}: detour {detour} missing");
+            }
+            // sing-box refuses to start at all ("TLS required") over one QUIC outbound without TLS.
+            if (Str(outbound["type"]) is "hysteria2" or "hysteria" or "tuic"
+                && !(outbound["tls"]?["enabled"]?.GetValueKind() == JsonValueKind.True))
+            {
+                problems.Add($"outbound {Tag(outbound)}: {Str(outbound["type"])} without tls");
             }
         }
         if (Str(root["route"]?["final"]) is { } final && !tags.Contains(final))
