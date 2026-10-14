@@ -1,4 +1,6 @@
 using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
+using Avalonia.VisualTree;
 using Avalonia.Media.Transformation;
 using v2rayN.Desktop.Services;
 using Process = System.Diagnostics.Process;
@@ -137,7 +139,7 @@ public partial class ColituMainWindow : Window
         ApplyPreferencesToUi();
         ApplyAccount();
         ApplyStatus();
-        Dispatcher.UIThread.Post(() => MoveNavThumb(), DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(FitNav, DispatcherPriority.Loaded);
 
         if (offline)
         {
@@ -293,14 +295,13 @@ public partial class ColituMainWindow : Window
             child.IsVisible = child == target;
         }
 
-        // Support has no tab of its own: it opens from the floating launcher.
         var nav = page switch
         {
             "locations" => NavLocations,
             "plan" => NavPlan,
             "account" => NavAccount,
             "settings" => NavSettings,
-            "support" => null,
+            "support" => NavSupport,
             _ => NavHome
         };
         if (nav == null)
@@ -339,6 +340,78 @@ public partial class ColituMainWindow : Window
                 break;
         }
         UpdateSupportPolling();
+    }
+
+    /// <summary>
+    /// Keeps the tab pill inside the header at every window width and language (six tabs, Russian
+    /// labels are the longest): first centred between the fixed side columns with the normal
+    /// spacing; then the side columns take only what they need and the tabs come closer; then
+    /// the wordmark gives way to the mark alone; last a slightly smaller font.
+    /// </summary>
+    private void FitNav()
+    {
+        if (HeaderBar == null || HeaderBar.Bounds.Width <= 0)
+        {
+            return;
+        }
+        var tabs = NavList.Children.OfType<RadioButton>().Where(tab => tab.IsVisible).ToList();
+        double Tabs(double padding, double font)
+        {
+            var width = 10.0; // the pill's padding and border
+            foreach (var tab in tabs)
+            {
+                tab.Padding = new Thickness(padding, 0);
+                tab.FontSize = font;
+                width += Remeasure(tab).Width;
+            }
+            return width;
+        }
+        BrandWordmark.IsVisible = true;
+        var logo = Remeasure(BrandMark).Width;
+        var mark = logo - BrandWordmark.DesiredSize.Width;
+        var right = Remeasure(HeaderRight).Width;
+        var total = HeaderBar.Bounds.Width;
+        const double Gap = 32;
+
+        void Columns(bool fixedSides)
+        {
+            HeaderBar.ColumnDefinitions[0].Width = fixedSides ? new GridLength(220) : GridLength.Auto;
+            HeaderBar.ColumnDefinitions[2].Width = fixedSides ? new GridLength(220) : GridLength.Auto;
+        }
+
+        var placed = false;
+        if (logo <= 220 && right <= 220 && Tabs(20, 14) <= total - 440 - Gap)
+        {
+            Columns(true);
+            placed = true;
+        }
+        foreach (var (wordmark, padding, font) in new[] { (true, 20.0, 14.0), (true, 16.0, 14.0), (true, 12.0, 14.0), (false, 16.0, 14.0), (false, 12.0, 14.0), (false, 10.0, 13.0) })
+        {
+            if (placed)
+            {
+                break;
+            }
+            var side = (wordmark ? logo : mark) + right;
+            if (Tabs(padding, font) <= total - side - Gap || (padding == 10.0 && font == 13.0))
+            {
+                Columns(false);
+                BrandWordmark.IsVisible = wordmark;
+                placed = true;
+            }
+        }
+        Dispatcher.UIThread.Post(MoveNavThumb, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>The control's natural size now (a changed padding or font inside it included).</summary>
+    private static Size Remeasure(Control control)
+    {
+        foreach (var item in control.GetVisualDescendants().OfType<Layoutable>())
+        {
+            item.InvalidateMeasure();
+        }
+        control.InvalidateMeasure();
+        control.Measure(Size.Infinity);
+        return control.DesiredSize;
     }
 
     private void MoveNavThumb()
@@ -392,7 +465,7 @@ public partial class ColituMainWindow : Window
             // The panel writes the notices in the app's language.
             _ = RefreshNoticesAsync();
         }
-        Dispatcher.UIThread.Post(MoveNavThumb, DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(FitNav, DispatcherPriority.Loaded);
     }
 
     private void BuildLanguageSelectors()
@@ -539,12 +612,12 @@ public partial class ColituMainWindow : Window
         }
         MinimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseButton.Click += (_, _) => Close();
-        SupportLauncher.Click += (_, _) => Navigate("support");
         foreach (var nav in NavList.Children.OfType<RadioButton>())
         {
             nav.IsCheckedChanged += Nav_Checked;
         }
         NavList.SizeChanged += (_, _) => MoveNavThumb();
+        HeaderBar.SizeChanged += (_, _) => FitNav();
     }
 
     private void ApplyWindowShape()

@@ -119,6 +119,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["nav.plan"] = ["Тариф", "Paket", "Plan"],
         ["nav.account"] = ["Аккаунт", "Hesap", "Account"],
         ["nav.settings"] = ["Настройки", "Ayarlar", "Settings"],
+        ["nav.liveSupport"] = ["Поддержка", "Canlı destek", "Live support"],
         ["window.minimize"] = ["Свернуть", "Küçült", "Minimize"],
         ["window.close"] = ["Свернуть в трей", "Tepsiye küçült", "Hide to tray"],
         ["loading.session"] = ["Восстанавливаем сеанс…", "Oturumunuz açılıyor…", "Restoring your session…"],

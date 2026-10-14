@@ -137,3 +137,36 @@ public class ColituLiveSupportMarkdownTests
         AwesomeAssertions.AssertionExtensions.Should(v2rayN.Desktop.Views.ColituMainWindow.PlainAnswer(answer)).Be(shown);
     }
 }
+
+/// <summary>2026-10-14: "Live support" is a top tab (with an unread dot), not a window button.</summary>
+public class ColituLiveSupportTabTests
+{
+    [Fact]
+    public void LiveSupport_IsATopTab_WithDot_AndNoLauncher()
+    {
+        var xaml = File.ReadAllText(Path.Combine(AppSource(), "Views", "ColituMainWindow.axaml"));
+        xaml.Should().Contain("x:Name=\"NavSupport\"")
+            .And.Contain("AutomationProperties.Name=\"{s:T nav.liveSupport}\"")
+            .And.Contain("Tag=\"support\"")
+            .And.Contain("x:Name=\"NavSupportDot\"")
+            .And.NotContain("SupportLauncher");
+        var window = File.ReadAllText(Path.Combine(AppSource(), "Views", "ColituMainWindow.axaml.cs"));
+        window.Should().Contain("\"support\" => NavSupport,").And.Contain("private void FitNav()");
+    }
+
+    [Fact]
+    public void LiveSupport_TabLabel_InEveryLanguage()
+    {
+        Loc.ValuesOf("nav.liveSupport").Should().Equal("Поддержка", "Canlı destek", "Live support");
+    }
+
+    private static string AppSource()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "ColituVPN", "Services")))
+        {
+            dir = dir.Parent;
+        }
+        return Path.Combine(dir!.FullName, "ColituVPN");
+    }
+}
