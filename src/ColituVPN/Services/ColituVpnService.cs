@@ -2362,7 +2362,7 @@ public sealed class ColituVpnService
         lastSwitch == null || now - lastSwitch.Value >= TransportSwitchMinInterval;
 
     /// <summary>A Russian and two foreign addresses that accept TCP on 443 (the kill switch lets the last two through).</summary>
-    private static readonly IPAddress[] DirectReferences = [IPAddress.Parse("77.88.8.8"), IPAddress.Parse("1.1.1.1"), IPAddress.Parse("8.8.8.8")];
+    private static readonly IPAddress[] DirectReferences = [IPAddress.Parse("77.88.8.8"), IPAddress.Parse("208.67.222.222"), IPAddress.Parse("8.8.8.8")]; // no Cloudflare: throttled in Russia
 
     /// <summary>
     /// Whether the internet answers outside the tunnel (TCP 443, bound to the physical interface).
@@ -3718,7 +3718,8 @@ public sealed class ColituVpnService
     /// <summary>Generic connectivity checks, never the Colitu API; the first 2xx answer through the tunnel counts.</summary>
     internal static readonly string[] TrafficProbeUrls =
     [
-        "https://cp.cloudflare.com/generate_204",
+        // No Cloudflare: it is throttled in Russia.
+        "https://www.apple.com/library/test/success.html",
         "https://www.gstatic.com/generate_204",
         "http://www.msftconnecttest.com/connecttest.txt"
     ];
