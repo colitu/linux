@@ -384,6 +384,7 @@ public partial class ColituMainWindow : Window
             KillSwitchRecoveryBody.Text = Loc.I[_vpn.KillSwitchApplies ? "ksr.body" : "ksr.bodyOff"];
         }
         RenderSupportList();
+        RenderSupportChat();
         UpdateTrayMenu();
         _ = LoadDevicesAsync();
         if (AppView.IsVisible)
@@ -433,6 +434,8 @@ public partial class ColituMainWindow : Window
         {
             ApplyLanguage(language);
             await _vpn.UpdatePreferencesAsync(_vpn.Preferences with { Language = language });
+            // The account's e-mails and notices follow the app's language.
+            _ = ColituAuthService.Instance.ReportLanguageAsync();
         }), DispatcherPriority.Background);
     }
 

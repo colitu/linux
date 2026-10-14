@@ -45,6 +45,7 @@ public partial class ColituMainWindow
         SupportAttachReplyButton.Click += async (_, _) => await GuardAsync("AttachReply", () => PickSupportFilesAsync(_supportReplyFiles, SupportReplyFiles));
         SupportCreateButton.Click += async (_, _) => await CreateSupportRequestAsync();
         SupportSendButton.Click += async (_, _) => await SendSupportReplyAsync();
+        WireSupportChat();
         SupportList.SelectionChanged += async (_, _) =>
         {
             if (!_supportSelecting && SupportList.SelectedItem is ColituSupportRow row)
@@ -87,6 +88,7 @@ public partial class ColituMainWindow
         SupportLauncher.IsVisible = false;
         SupportList.ItemsSource = null;
         SupportMessages.Children.Clear();
+        ResetSupportChat();
         ShowSupportPane(SupportPlaceholder);
     }
 
@@ -240,7 +242,7 @@ public partial class ColituMainWindow
 
     private void ShowSupportPane(Control pane)
     {
-        foreach (var candidate in new Control[] { SupportPlaceholder, SupportNewForm, SupportThread })
+        foreach (var candidate in new Control[] { SupportPlaceholder, SupportNewForm, SupportThread, SupportChat })
         {
             candidate.IsVisible = candidate == pane;
         }

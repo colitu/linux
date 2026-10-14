@@ -439,6 +439,36 @@ public sealed class ColituAuthService
 
     public Uri ApiUri(string path) => BuildUri(path);
 
+    /// <summary>The app's language as the Accept-Language of an API request (tr, en or ru).</summary>
+    internal static HttpRequestMessage WithAppLanguage(HttpRequestMessage request)
+    {
+        if (!request.Headers.Contains("Accept-Language"))
+        {
+            request.Headers.TryAddWithoutValidation("Accept-Language", Loc.I.Language);
+        }
+        return request;
+    }
+
+    /// <summary>
+    /// Tells the panel the app's language changed (PUT /client/locale), so the account's e-mails
+    /// and notices follow it. Best effort: a panel without the endpoint, or no network, changes nothing.
+    /// </summary>
+    public async Task ReportLanguageAsync()
+    {
+        if (!HasSession)
+        {
+            return;
+        }
+        try
+        {
+            using var response = await SendAuthorizedAsync(() => JsonRequest(HttpMethod.Put, "/client/locale", new { locale = Loc.I.Language }));
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituAuthService.ReportLanguage: {ex.GetType().Name}");
+        }
+    }
+
     public async Task<T?> ReadResponseJsonAsync<T>(HttpResponseMessage response) => await ReadJsonAsync<T>(response);
 
     public async Task PostAuthorizedAsync(string path, object body)
@@ -874,6 +904,10 @@ public sealed class ColituAuthService
     private async Task<HttpResponseMessage> SendApiAsync(Func<HttpRequestMessage> requestFactory, CancellationToken token)
     {
         var http = _httpClient;
+        var create = requestFactory;
+        // Every API request names the language the app runs in: the panel keeps it as the account's
+        // language, so codes, notices and support e-mails arrive in it (not only the sign-up language).
+        requestFactory = () => WithAppLanguage(create());
         if (_apiOverride != null)
         {
             return await http.SendAsync(requestFactory(), token);

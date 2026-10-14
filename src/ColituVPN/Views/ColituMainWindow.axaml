@@ -2612,6 +2612,22 @@
                                 VerticalAlignment="Bottom"
                                 Orientation="Horizontal">
                                 <Button
+                                    x:Name="SupportChatButton"
+                                    Height="42"
+                                    Margin="0,0,10,0"
+                                    Padding="16,0"
+                                    Theme="{StaticResource SecondaryButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path
+                                            Width="14"
+                                            Height="14"
+                                            Margin="0,0,8,0"
+                                            Classes="stroke text"
+                                            Data="{StaticResource IconChat}" />
+                                        <TextBlock FontSize="13.5" Text="{s:T bot.button}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button
                                     x:Name="SupportHelpButton"
                                     Height="42"
                                     Margin="0,0,10,0"
@@ -2902,6 +2918,155 @@
                                                                 Classes="spinner onAccent"
                                                                 IsVisible="False" />
                                                         </Panel>
+                                                    </Button>
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                    <Grid
+                                        x:Name="SupportChat"
+                                        IsVisible="False"
+                                        RowDefinitions="Auto,*,Auto">
+                                        <Border
+                                            Padding="24,16"
+                                            BorderBrush="{StaticResource LineBrush}"
+                                            BorderThickness="0,0,0,1">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <Panel
+                                                    Width="40"
+                                                    Height="40"
+                                                    Margin="0,0,12,0"
+                                                    VerticalAlignment="Center">
+                                                    <Ellipse Fill="{StaticResource IconWellBrush}" Stroke="{StaticResource LineStrongBrush}" />
+                                                    <Path
+                                                        Width="18"
+                                                        Height="18"
+                                                        Data="{StaticResource IconChat}"
+                                                        Stretch="Uniform"
+                                                        Stroke="{StaticResource LilacBrush}"
+                                                        StrokeJoin="Round"
+                                                        StrokeThickness="1.8" />
+                                                    <Ellipse
+                                                        Width="10"
+                                                        Height="10"
+                                                        Margin="0,0,1,1"
+                                                        HorizontalAlignment="Right"
+                                                        VerticalAlignment="Bottom"
+                                                        Fill="#FF5EE0A0"
+                                                        Stroke="{StaticResource Surface2Brush}"
+                                                        StrokeThickness="2" />
+                                                </Panel>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Classes="h2" Text="{s:T bot.title}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T bot.sub}" />
+                                                </StackPanel>
+                                                <Button
+                                                    x:Name="SupportChatResetButton"
+                                                    Grid.Column="2"
+                                                    Margin="12,0,0,0"
+                                                    VerticalAlignment="Center"
+                                                    Content="{s:T bot.new}"
+                                                    Theme="{StaticResource LinkButton}" />
+                                            </Grid>
+                                        </Border>
+                                        <ScrollViewer
+                                            x:Name="SupportChatScroll"
+                                            Grid.Row="1"
+                                            HorizontalScrollBarVisibility="Disabled"
+                                            VerticalScrollBarVisibility="Auto">
+                                            <StackPanel x:Name="SupportChatMessages" Margin="24,18,24,10" />
+                                        </ScrollViewer>
+                                        <Border
+                                            Grid.Row="2"
+                                            Padding="16,14"
+                                            BorderBrush="{StaticResource LineBrush}"
+                                            BorderThickness="0,1,0,0">
+                                            <StackPanel>
+                                                <Border
+                                                    x:Name="SupportChatHandover"
+                                                    Margin="0,0,0,12"
+                                                    Padding="16,14"
+                                                    Classes="tile"
+                                                    IsVisible="False">
+                                                    <StackPanel>
+                                                        <TextBlock
+                                                            FontSize="14"
+                                                            FontWeight="Medium"
+                                                            Text="{s:T bot.handoverTitle}" />
+                                                        <TextBlock
+                                                            Margin="0,4,0,10"
+                                                            Classes="small"
+                                                            Text="{s:T bot.handoverLead}" />
+                                                        <Border Classes="field">
+                                                            <TextBox
+                                                                x:Name="SupportChatNote"
+                                                                MinHeight="44"
+                                                                MaxHeight="120"
+                                                                Classes="bare area"
+                                                                MaxLength="2000"
+                                                                PlaceholderText="{s:T bot.handoverNote}" />
+                                                        </Border>
+                                                        <StackPanel
+                                                            Margin="0,10,0,0"
+                                                            HorizontalAlignment="Right"
+                                                            Orientation="Horizontal">
+                                                            <Button
+                                                                x:Name="SupportChatHandoverCancelButton"
+                                                                Height="40"
+                                                                Margin="0,0,10,0"
+                                                                Padding="16,0"
+                                                                Theme="{StaticResource SecondaryButton}">
+                                                                <TextBlock FontSize="13.5" Text="{s:T support.cancel}" />
+                                                            </Button>
+                                                            <Button
+                                                                x:Name="SupportChatHandoverButton"
+                                                                Height="40"
+                                                                Padding="18,0"
+                                                                Theme="{StaticResource PrimaryButton}">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <Ellipse
+                                                                        x:Name="SupportChatHandoverSpinner"
+                                                                        Margin="0,0,10,0"
+                                                                        Classes="spinner onAccent"
+                                                                        IsVisible="False" />
+                                                                    <TextBlock FontSize="13.5" Text="{s:T bot.handover}" />
+                                                                </StackPanel>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <Border Classes="field">
+                                                        <TextBox
+                                                            x:Name="SupportChatBox"
+                                                            MinHeight="48"
+                                                            MaxHeight="150"
+                                                            Classes="bare area"
+                                                            MaxLength="1500"
+                                                            PlaceholderText="{s:T bot.placeholder}" />
+                                                    </Border>
+                                                    <Button
+                                                        x:Name="SupportChatSendButton"
+                                                        Grid.Column="1"
+                                                        Width="48"
+                                                        Height="48"
+                                                        Margin="10,0,0,0"
+                                                        Padding="0"
+                                                        VerticalAlignment="Bottom"
+                                                        Theme="{StaticResource PrimaryButton}"
+                                                        ToolTip.Tip="{s:T support.send}">
+                                                        <Path
+                                                            Width="17"
+                                                            Height="17"
+                                                            Data="{StaticResource IconSend}"
+                                                            Stretch="Uniform"
+                                                            Stroke="{StaticResource OnAccentBrush}"
+                                                            StrokeJoin="Round"
+                                                            StrokeLineCap="Round"
+                                                            StrokeThickness="2" />
                                                     </Button>
                                                 </Grid>
                                             </StackPanel>
