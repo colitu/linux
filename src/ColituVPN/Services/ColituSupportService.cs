@@ -53,6 +53,28 @@ public sealed partial class ColituSupportService
         return (await _auth.ReadResponseJsonAsync<Envelope<UnreadDto>>(response))?.Data?.Unread ?? 0;
     }
 
+    /// <summary>The open "send your connection report" request of a support agent, or null.</summary>
+    public async Task<ColituDiagnosticsRequest?> DiagnosticsRequestAsync()
+    {
+        using var response = await _auth.SendAuthorizedRequestAsync(() => new HttpRequestMessage(HttpMethod.Get, _auth.ApiUri("/support/diagnostics-request")));
+        return ColituDiagnosticsAsker.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>Uploads the full report; <paramref name="requestId"/> only when the user answers a request.</summary>
+    public async Task UploadDiagnosticsAsync(string conversationId, string? requestId, string report)
+    {
+        var body = ColituDiagnosticsAsker.BuildUploadBody(requestId, report, ColituAuthService.ClientPlatform, ColituAuthService.ClientVersion, OsDescription());
+        using var response = await _auth.SendAuthorizedRequestAsync(() => new HttpRequestMessage(HttpMethod.Post, _auth.ApiUri($"/support/conversations/{Uri.EscapeDataString(conversationId)}/diagnostics"))
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    public async Task DeclineDiagnosticsRequestAsync(string requestId)
+    {
+        using var response = await _auth.SendAuthorizedRequestAsync(() => new HttpRequestMessage(HttpMethod.Post, _auth.ApiUri($"/support/diagnostics-requests/{Uri.EscapeDataString(requestId)}/decline")));
+    }
+
     public async Task<ColituSupportConversation?> CreateAsync(string subject, string message, IReadOnlyList<string> files, ColituSupportDiagnostics? diagnostics)
     {
         var payload = new { subject, message, locale = Loc.I.Language, diagnostics };
@@ -171,6 +193,28 @@ public sealed partial class ColituSupportService
     /// </summary>
     public static ColituSupportDiagnostics CollectDiagnostics()
     {
+        var diagnostics = CollectFields();
+        diagnostics.Logs = ReadLogTail();
+        return diagnostics;
+    }
+
+    /// <summary>How much of the app log the full connection report carries.</summary>
+    internal const int FullReportLogChars = 200_000;
+
+    /// <summary>
+    /// The full plain-text connection report (device, versions, connection state, last errors and a
+    /// long tail of the app log, which already carries the cores' filtered output). Redacted like
+    /// <see cref="CollectDiagnostics"/>; the cores' own log files are not read, they list visited sites.
+    /// </summary>
+    public static string BuildFullReport()
+    {
+        return ColituDiagnosticsAsker.BuildReportText(CollectFields(), ReadLogTail(FullReportLogChars), DateTimeOffset.UtcNow);
+    }
+
+    private static string OsDescription() => $"{LinuxDistribution()} · {Environment.OSVersion.VersionString} ({RuntimeInformation.OSArchitecture})";
+
+    private static ColituSupportDiagnostics CollectFields()
+    {
         var vpn = ColituVpnService.Instance;
         var errors = new List<string>();
         if (!string.IsNullOrWhiteSpace(vpn.LastError))
@@ -188,8 +232,7 @@ public sealed partial class ColituSupportService
             Server = server == null ? (vpn.IsAutoSelection ? "auto" : vpn.SavedServerId) : $"{server.Country ?? server.CountryCode} {server.City} ({server.Id})".Trim(),
             Protocol = vpn.ConnectedProtocol,
             Connected = vpn.Status == ColituVpnStatus.Connected,
-            LastErrors = errors,
-            Logs = ReadLogTail()
+            LastErrors = errors
         };
     }
 
