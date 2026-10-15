@@ -87,6 +87,13 @@ public sealed class ColituDiagnosticsAsker
         _lastCheck = DateTimeOffset.MinValue;
     }
 
+    /// <summary>
+    /// A panel without the diagnostics endpoint (an older version) answers the poll with 404 or 405:
+    /// that is "no request", never an error worth logging.
+    /// </summary>
+    public static bool IsMissingEndpoint(Exception ex) =>
+        ex is ColituApiException { StatusCode: System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed };
+
     /// <summary>Reads <c>{"data":{"request":...}}</c>; null for no request or anything unreadable.</summary>
     public static ColituDiagnosticsRequest? Parse(string? json)
     {

@@ -86,6 +86,70 @@ public class ColituSiteRedactionTests
         Mask("https://notcolitu.com/").Should().Be("https://<site>/");
     }
 
+    [Theory]
+    [InlineData("dial tcp 198.51.100.20:443: i/o timeout", "dial tcp <ip>:443: i/o timeout")]
+    [InlineData("dial tcp4 shop.example.org:443: connect: refused", "dial tcp4 <site>:443: connect: refused")]
+    [InlineData("read udp 192.168.1.5:5353->198.51.100.9:53: i/o timeout", "read udp <ip>:5353-><ip>:53: i/o timeout")]
+    [InlineData("write tcp [2001:db8::2]:51000->[2001:db8::9]:443: broken pipe", "write tcp <ip>:51000-><ip>:443: broken pipe")]
+    [InlineData("read udp 127.0.0.1:40000->8.8.8.8:53: timeout", "read udp 127.0.0.1:40000->8.8.8.8:53: timeout")]
+    [InlineData("dial tcp 203.0.113.7:443: timeout", "dial tcp 203.0.113.7:443: timeout")]
+    public void GoNetworkErrors_AreMasked(string line, string expected)
+    {
+        Mask(line).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("outbound/direct[direct]: outbound connection to video.example.org:443", "outbound/direct[direct]: outbound connection to <site>:443")]
+    [InlineData("inbound/tun[tun-in]: inbound connection to 198.51.100.4:443", "inbound/tun[tun-in]: inbound connection to <ip>:443")]
+    [InlineData("inbound/mixed[socks]: inbound connection from 127.0.0.1:50122", "inbound/mixed[socks]: inbound connection from 127.0.0.1:50122")]
+    [InlineData("outbound/vless[proxy]: outbound connection to de1.nodes.example.net:443", "outbound/vless[proxy]: outbound connection to de1.nodes.example.net:443")]
+    public void SingBoxConnections_AreMasked(string line, string expected)
+    {
+        Mask(line).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("app/dns: UDP:8.8.8.8:53 got answer: mail.example.org. TypeA -> [198.51.100.1 198.51.100.2] 12ms", "app/dns: UDP:8.8.8.8:53 got answer: <site>. TypeA -> [<ip> <ip>] 12ms")]
+    [InlineData("app/dns: UDP:8.8.8.8:53 exchanged forum.example.org. TypeAAAA", "app/dns: UDP:8.8.8.8:53 exchanged <site>. TypeAAAA")]
+    [InlineData("{\"addr\":\"chat.example.org:443\",\"ok\":true}", "{\"addr\":\"<site>:443\",\"ok\":true}")]
+    [InlineData("{\"addr\": \"198.51.100.7:8443\"}", "{\"addr\": \"<ip>:8443\"}")]
+    [InlineData("tls handshake sni=bank.example.org failed", "tls handshake sni=<site> failed")]
+    [InlineData("tls handshake sni=de1.nodes.example.net ok", "tls handshake sni=de1.nodes.example.net ok")]
+    public void XrayDnsJsonAndSni_AreMasked(string line, string expected)
+    {
+        Mask(line).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("2026/10/15 12:34:56.123456 [Info] started")]
+    [InlineData("Xray 26.10.10 (Xray, Penetrates Everything.) and sing-box version 1.14.3")]
+    [InlineData("Colitu VPN 1.5.1 on Linux 6.8.0-45-generic")]
+    public void TimestampsAndVersions_AreNotTouched(string line)
+    {
+        Mask(line).Should().Be(line);
+    }
+
+    [Fact]
+    public void ServerOnAMultiLabelSuffix_KeepsOnlyItsOwnDomain()
+    {
+        var servers = new[] { "uk1.nodes.example.co.uk" };
+        ColituSiteRedaction.Apply("dial tcp:uk2.nodes.example.co.uk:443", servers).Should().Be("dial tcp:uk2.nodes.example.co.uk:443");
+        ColituSiteRedaction.Apply("dial tcp:www.bbc.co.uk:443", servers).Should().Be("dial tcp:<site>:443");
+        ColituSiteRedaction.Apply("https://shop.example.com.tr/", ["tr1.example.com.tr"]).Should().Be("https://shop.example.com.tr/");
+        ColituSiteRedaction.Apply("https://www.other.com.tr/", ["tr1.example.com.tr"]).Should().Be("https://<site>/");
+    }
+
+    [Theory]
+    [InlineData("example.co.uk", "example.co.uk")]
+    [InlineData("a.b.example.com.ru", "example.com.ru")]
+    [InlineData("www.example.org", "example.org")]
+    [InlineData("co.uk", null)]
+    [InlineData("localname", null)]
+    public void RegistrableDomain_CountsMultiLabelSuffixesAsOne(string host, string? expected)
+    {
+        ColituSiteRedaction.RegistrableDomain(host).Should().Be(expected);
+    }
+
     [Fact]
     public void NoServerList_StillWorks()
     {

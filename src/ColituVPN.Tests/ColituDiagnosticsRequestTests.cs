@@ -139,4 +139,20 @@ public class ColituDiagnosticsRequestTests
         asker.ShouldAnswer(request, Now).Should().BeTrue();
         asker.TryBeginCheck(Now).Should().BeTrue();
     }
+
+    [Theory]
+    [InlineData(System.Net.HttpStatusCode.NotFound, true)]
+    [InlineData(System.Net.HttpStatusCode.MethodNotAllowed, true)]
+    [InlineData(System.Net.HttpStatusCode.InternalServerError, false)]
+    [InlineData(System.Net.HttpStatusCode.Unauthorized, false)]
+    public void AnOlderPanelWithoutTheEndpoint_MeansNoRequest(System.Net.HttpStatusCode status, bool missing)
+    {
+        ColituDiagnosticsAsker.IsMissingEndpoint(new ColituApiException(status, "x")).Should().Be(missing);
+    }
+
+    [Fact]
+    public void OtherFailures_AreNotAMissingEndpoint()
+    {
+        ColituDiagnosticsAsker.IsMissingEndpoint(new System.Net.Http.HttpRequestException("offline")).Should().BeFalse();
+    }
 }

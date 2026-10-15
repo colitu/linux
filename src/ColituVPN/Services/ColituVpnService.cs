@@ -2375,7 +2375,7 @@ public sealed class ColituVpnService
     internal static bool ShouldSwitchTransport(DateTimeOffset? lastSwitch, DateTimeOffset now) =>
         lastSwitch == null || now - lastSwitch.Value >= TransportSwitchMinInterval;
 
-    /// <summary>A Russian and two foreign addresses that accept TCP on 443 (the kill switch lets the last two through).</summary>
+    /// <summary>A Russian and two foreign addresses that accept TCP on 443 (the kill switch lets the last two through: <see cref="EngageKillSwitchAsync"/>).</summary>
     private static readonly IPAddress[] DirectReferences = [IPAddress.Parse("77.88.8.8"), IPAddress.Parse("208.67.222.222"), IPAddress.Parse("8.8.8.8")]; // no Cloudflare: throttled in Russia
 
     /// <summary>
@@ -2778,6 +2778,9 @@ public sealed class ColituVpnService
                 }
             }
             allowed.AddRange(new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4" }.Select(IPAddress.Parse));
+            // The foreign direct-reachability references (DirectReferences): the kill switch is armed
+            // before a connect, so its offline check must still reach them.
+            allowed.AddRange(DirectReferences.Skip(1));
             await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
             LogConnection($"Kill switch engaged ({reason}), {allowed.Distinct().Count()} addresses allowed");
             return true;

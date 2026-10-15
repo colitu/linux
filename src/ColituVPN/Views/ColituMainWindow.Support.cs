@@ -163,6 +163,10 @@ public partial class ColituMainWindow
         {
             // Support is switched off in the panel.
         }
+        catch (Exception ex) when (ColituDiagnosticsAsker.IsMissingEndpoint(ex))
+        {
+            // An older panel without the endpoint: no request.
+        }
         catch (Exception ex) when (ColituVpnService.IsNetworkFailure(ex))
         {
             // Offline: the next check tries again.

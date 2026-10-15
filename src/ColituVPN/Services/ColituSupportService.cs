@@ -215,7 +215,8 @@ public sealed partial class ColituSupportService
     public static ColituSupportDiagnostics CollectDiagnostics()
     {
         var diagnostics = CollectFields();
-        diagnostics.Logs = ReadLogTail();
+        // Visited sites are masked here too, as in the full report.
+        diagnostics.Logs = ReadLogTail() is { } logs ? ColituSiteRedaction.Apply(logs, ColituVpnService.Instance.KnownServerHosts()) : null;
         return diagnostics;
     }
 
