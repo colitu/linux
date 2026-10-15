@@ -8,7 +8,6 @@ namespace v2rayN.Desktop.Services;
 public sealed class ColituDiagnosticsRequest
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";
-    [JsonPropertyName("conversation_id")] public string ConversationId { get; set; } = "";
     [JsonPropertyName("status")] public string? Status { get; set; }
     [JsonPropertyName("created_at")] public DateTimeOffset? CreatedAt { get; set; }
     [JsonPropertyName("expires_at")] public DateTimeOffset? ExpiresAt { get; set; }
@@ -16,20 +15,16 @@ public sealed class ColituDiagnosticsRequest
 
 public enum ColituDiagnosticsOutcome
 {
-    /// <summary>The report was uploaded.</summary>
-    Sent,
-    /// <summary>The user chose "Don't send".</summary>
-    Declined,
-    /// <summary>The prompt closed without a choice (Esc, sign-out): ask again later.</summary>
-    Dismissed,
-    /// <summary>The upload failed: ask again later.</summary>
+    /// <summary>The report was uploaded, or the panel says the request is no longer pending (404): never retried.</summary>
+    Answered,
+    /// <summary>The upload failed: tried again no sooner than ten minutes later.</summary>
     Failed
 }
 
 /// <summary>
 /// Pure parts of the connection-report flow: reading the panel's answer, and the timing and
 /// decision rules (at most one check per minute, a request already answered in this run is not
-/// shown again, a dismissed or failed one comes back after ten minutes).
+/// answered again, a failed upload is retried after ten minutes). The report goes out silently.
 /// </summary>
 public sealed class ColituDiagnosticsAsker
 {
@@ -53,10 +48,10 @@ public sealed class ColituDiagnosticsAsker
         return true;
     }
 
-    /// <summary>Whether the prompt should be shown for this request now.</summary>
-    public bool ShouldAsk(ColituDiagnosticsRequest? request, DateTimeOffset now)
+    /// <summary>Whether the report for this request should be sent now.</summary>
+    public bool ShouldAnswer(ColituDiagnosticsRequest? request, DateTimeOffset now)
     {
-        if (request == null || string.IsNullOrWhiteSpace(request.Id) || string.IsNullOrWhiteSpace(request.ConversationId)
+        if (request == null || string.IsNullOrWhiteSpace(request.Id)
             || !string.Equals(request.Status, "pending", StringComparison.OrdinalIgnoreCase)
             || (request.ExpiresAt is { } expires && expires <= now)
             || _answered.Contains(request.Id))
@@ -74,8 +69,7 @@ public sealed class ColituDiagnosticsAsker
         }
         switch (outcome)
         {
-            case ColituDiagnosticsOutcome.Sent:
-            case ColituDiagnosticsOutcome.Declined:
+            case ColituDiagnosticsOutcome.Answered:
                 _answered.Add(requestId);
                 _askAgainAt.Remove(requestId);
                 break;
@@ -112,19 +106,16 @@ public sealed class ColituDiagnosticsAsker
         }
     }
 
-    /// <summary>The JSON body of the upload; <paramref name="requestId"/> only when answering a request.</summary>
-    public static string BuildUploadBody(string? requestId, string report, string platform, string? appVersion, string? osVersion)
+    /// <summary>The JSON body of a report upload (for a request and for a new conversation alike).</summary>
+    public static string BuildUploadBody(string report, string platform, string? appVersion, string? osVersion)
     {
-        var body = new Dictionary<string, string?>();
-        if (!string.IsNullOrWhiteSpace(requestId))
+        return JsonSerializer.Serialize(new Dictionary<string, string?>
         {
-            body["request_id"] = requestId;
-        }
-        body["report"] = report;
-        body["platform"] = platform;
-        body["app_version"] = appVersion;
-        body["os_version"] = osVersion;
-        return JsonSerializer.Serialize(body);
+            ["report"] = report,
+            ["platform"] = platform,
+            ["app_version"] = appVersion,
+            ["os_version"] = osVersion
+        });
     }
 
     /// <summary>

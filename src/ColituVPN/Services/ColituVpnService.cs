@@ -233,6 +233,20 @@ public sealed class ColituVpnService
     /// The server "best server" connects to first (rank[0] of <see cref="RankedServers"/>); the
     /// location list and the home card show the same one. Null before the list is loaded.
     /// </summary>
+    /// <summary>
+    /// Host names and addresses of the servers the app knows (the list and the connected one).
+    /// Connection reports keep them readable while other hosts are masked.
+    /// </summary>
+    public IReadOnlyList<string> KnownServerHosts()
+    {
+        return _lastServers.Append(ConnectedServer)
+            .Select(server => server?.Host)
+            .Where(host => !string.IsNullOrWhiteSpace(host))
+            .Select(host => host!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public ColituVpnServer? RecommendedServer => RankedServers().FirstOrDefault();
 
     /// <summary>The order automatic mode tries the servers in on the current network (see <see cref="ColituAdaptiveConnect.Rank"/>).</summary>

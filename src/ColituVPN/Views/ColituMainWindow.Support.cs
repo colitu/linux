@@ -26,9 +26,7 @@ public partial class ColituMainWindow
     private bool _supportSelecting;
     private bool _supportPolling;
     private readonly ColituDiagnosticsAsker _diagAsker = new();
-    private ColituDiagnosticsRequest? _diagRequest;
-    private bool _diagChecking;
-    private bool _diagSending;
+    private bool _diagBusy;
 
     private void WireSupport()
     {
@@ -50,7 +48,7 @@ public partial class ColituMainWindow
         SupportCreateButton.Click += async (_, _) => await CreateSupportRequestAsync();
         SupportSendButton.Click += async (_, _) => await SendSupportReplyAsync();
         WireSupportChat();
-        WireDiagnosticsPrompt();
+        Activated += async (_, _) => await AnswerDiagnosticsRequestAsync();
         SupportList.SelectionChanged += async (_, _) =>
         {
             if (!_supportSelecting && SupportList.SelectedItem is ColituSupportRow row)
@@ -75,12 +73,12 @@ public partial class ColituMainWindow
         _supportUnreadTimer ??= NewTimer(TimeSpan.FromSeconds(45), async () =>
         {
             await CheckSupportUnreadAsync();
-            await CheckDiagnosticsRequestAsync();
+            await AnswerDiagnosticsRequestAsync();
         });
         _supportUnreadTimer.Start();
         ShowSupportTab(true);
         _ = CheckSupportUnreadAsync();
-        _ = CheckDiagnosticsRequestAsync();
+        _ = AnswerDiagnosticsRequestAsync();
     }
 
     private void StopSupportPolling()
@@ -95,8 +93,6 @@ public partial class ColituMainWindow
         _supportReplyFiles.Clear();
         _supportImages.Clear();
         _diagAsker.Reset();
-        _diagRequest = null;
-        DiagPrompt.IsVisible = false;
         NavSupportDot.IsVisible = false;
         ShowSupportTab(false);
         SupportList.ItemsSource = null;
@@ -127,50 +123,41 @@ public partial class ColituMainWindow
     }
 
     // ── Connection report requested by a support agent ─────────────────────
-    private void WireDiagnosticsPrompt()
-    {
-        DiagSendButton.Click += async (_, _) => await SendRequestedReportAsync();
-        DiagDeclineButton.Click += async (_, _) => await DeclineRequestedReportAsync();
-        Activated += async (_, _) => await CheckDiagnosticsRequestAsync();
-        // Esc closes the prompt without a choice: the request is asked again in ten minutes.
-        AddHandler(KeyDownEvent, (_, e) =>
-        {
-            if (e.Key == Key.Escape && DiagPrompt.IsVisible && !_diagSending && _diagRequest is { } request)
-            {
-                e.Handled = true;
-                _diagAsker.Record(request.Id, ColituDiagnosticsOutcome.Dismissed, DateTimeOffset.UtcNow);
-                CloseDiagPrompt();
-            }
-        }, RoutingStrategies.Tunnel);
-    }
-
     /// <summary>
-    /// Asks the panel whether an agent wants this device's report, at most once a minute (the 45 s
-    /// poll, app start and the window coming back to the front call this). A pending request not
-    /// answered in this run opens the prompt; nothing is uploaded without the user's choice.
+    /// Asks the panel whether an agent wants this device's report (at most once a minute: the 45 s
+    /// poll, app start and the window coming back to the front call this) and, when one is pending,
+    /// sends the redacted report silently. A request the panel no longer knows (404) counts as
+    /// answered; any other failure is retried no sooner than ten minutes later.
     /// </summary>
-    private async Task CheckDiagnosticsRequestAsync()
+    private async Task AnswerDiagnosticsRequestAsync()
     {
-        if (_diagChecking || _diagSending || !_auth.HasSession || !AppView.IsVisible
-            || DiagPrompt.IsVisible || !IsVisible || WindowState == WindowState.Minimized
+        if (_diagBusy || !_auth.HasSession || !AppView.IsVisible
+            || !IsVisible || WindowState == WindowState.Minimized
             || !_diagAsker.TryBeginCheck(DateTimeOffset.UtcNow))
         {
             return;
         }
 
-        _diagChecking = true;
+        _diagBusy = true;
         try
         {
             var request = await _support.DiagnosticsRequestAsync();
-            if (!_auth.HasSession || request == null || !_diagAsker.ShouldAsk(request, DateTimeOffset.UtcNow))
+            if (!_auth.HasSession || request == null || !_diagAsker.ShouldAnswer(request, DateTimeOffset.UtcNow))
             {
                 return;
             }
-            _diagRequest = request;
-            DiagSendButton.IsEnabled = true;
-            DiagDeclineButton.IsEnabled = true;
-            DiagPrompt.IsVisible = true;
-            ColituMotion.FadeIn(DiagPrompt, 8);
+            var outcome = ColituDiagnosticsOutcome.Answered;
+            try
+            {
+                var report = await Task.Run(ColituSupportService.BuildFullReport);
+                await _support.ReportDiagnosticsAsync(request.Id, report);
+            }
+            catch (Exception ex)
+            {
+                outcome = ColituDiagnosticsOutcome.Failed;
+                Logging.SaveLog("ColituMainWindow.AnswerDiagnosticsRequest", ex);
+            }
+            _diagAsker.Record(request.Id, outcome, DateTimeOffset.UtcNow);
         }
         catch (ColituApiException ex) when (ex.ErrorCode is "SUPPORT_UNAVAILABLE")
         {
@@ -182,74 +169,12 @@ public partial class ColituMainWindow
         }
         catch (Exception ex)
         {
-            Logging.SaveLog("ColituMainWindow.CheckDiagnosticsRequestAsync", ex);
+            Logging.SaveLog("ColituMainWindow.AnswerDiagnosticsRequestAsync", ex);
         }
         finally
         {
-            _diagChecking = false;
+            _diagBusy = false;
         }
-    }
-
-    private async Task SendRequestedReportAsync()
-    {
-        var request = _diagRequest;
-        if (request == null || _diagSending)
-        {
-            return;
-        }
-
-        _diagSending = true;
-        DiagSendButton.IsEnabled = false;
-        DiagDeclineButton.IsEnabled = false;
-        var outcome = ColituDiagnosticsOutcome.Sent;
-        try
-        {
-            var report = await Task.Run(ColituSupportService.BuildFullReport);
-            await _support.UploadDiagnosticsAsync(request.ConversationId, request.Id, report);
-        }
-        catch (Exception ex)
-        {
-            outcome = ColituDiagnosticsOutcome.Failed;
-            Logging.SaveLog("ColituMainWindow.SendRequestedReport", ex);
-        }
-        finally
-        {
-            _diagSending = false;
-        }
-
-        if (!_auth.HasSession)
-        {
-            return;
-        }
-        _diagAsker.Record(request.Id, outcome, DateTimeOffset.UtcNow);
-        CloseDiagPrompt();
-        ShowToast(Loc.I[outcome == ColituDiagnosticsOutcome.Sent ? "support.diag.sent" : "support.diag.failed"], outcome != ColituDiagnosticsOutcome.Sent);
-    }
-
-    private async Task DeclineRequestedReportAsync()
-    {
-        var request = _diagRequest;
-        if (request == null || _diagSending)
-        {
-            return;
-        }
-
-        _diagAsker.Record(request.Id, ColituDiagnosticsOutcome.Declined, DateTimeOffset.UtcNow);
-        CloseDiagPrompt();
-        try
-        {
-            await _support.DeclineDiagnosticsRequestAsync(request.Id);
-        }
-        catch (Exception ex)
-        {
-            Logging.SaveLog("ColituMainWindow.DeclineRequestedReport", ex);
-        }
-    }
-
-    private void CloseDiagPrompt()
-    {
-        DiagPrompt.IsVisible = false;
-        _diagRequest = null;
     }
 
     private async Task CheckSupportUnreadAsync()
@@ -467,7 +392,7 @@ public partial class ColituMainWindow
         try
         {
             var report = await Task.Run(ColituSupportService.BuildFullReport);
-            await _support.UploadDiagnosticsAsync(conversationId, null, report);
+            await _support.UploadDiagnosticsAsync(conversationId, report);
         }
         catch
         {
