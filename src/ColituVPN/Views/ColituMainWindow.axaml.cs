@@ -638,6 +638,28 @@ public partial class ColituMainWindow : Window
             return;
         }
 
+        // Logout or power-off: never hold the session open (cancelling here makes the desktop
+        // report "Colitu is preventing logout"). Stop the tunnel and hand the proxy back now.
+        if (e.CloseReason is WindowCloseReason.OSShutdown or WindowCloseReason.ApplicationShutdown)
+        {
+            _exiting = true;
+            _vpn.CleanupForSessionEnd();
+            if (_trayIcon != null)
+            {
+                _trayIcon.IsVisible = false;
+                _trayIcon.Dispose();
+            }
+            // ShutdownMode.OnExplicitShutdown: without this the process outlives the closed window.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+                {
+                    desktop.Shutdown();
+                }
+            });
+            return;
+        }
+
         var keepRunning = _vpn.Preferences.CloseToTray && AppView.IsVisible && _trayIcon != null;
         e.Cancel = true;
         if (keepRunning)
