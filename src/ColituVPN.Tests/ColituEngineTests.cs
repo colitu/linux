@@ -37,6 +37,16 @@ public class ColituEngineTests
     }
 
     [Fact]
+    public void RankRequest_LeavesAlphaServersOut()
+    {
+        var request = ColituEngine.RankRequest(
+            [new ColituVpnServer { Id = "csl", CountryCode = "SE", Available = true, Alpha = true }, new ColituVpnServer { Id = "a", CountryCode = "DE", Available = true }],
+            new Dictionary<string, ColituPingSample>(), new ColituAdaptiveMemory(), "wifi|X", "TR", DateTimeOffset.UtcNow);
+
+        request["servers"]!.AsArray().Select(item => item!["id"]!.GetValue<string>()).Should().Equal("a");
+    }
+
+    [Fact]
     public async Task RealEngine_AgreesWithTheAppOnEveryRankingVector()
     {
         var exe = Environment.GetEnvironmentVariable("COLITU_ENGINE");

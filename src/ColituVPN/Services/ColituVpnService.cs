@@ -4217,6 +4217,8 @@ public sealed class ColituVpnServer
     public bool? AllowPremium { get; set; }
     public bool Available { get; set; } = true;
     public bool Locked { get; set; }
+    /// <summary>A hidden CSL test node (alpha tester accounts): a manual choice only, automatic mode never picks it.</summary>
+    public bool Alpha { get; set; }
     public string? RequiredPlan { get; set; }
     public bool Hidden { get; set; }
     public bool RetainedHiddenSelection { get; set; }

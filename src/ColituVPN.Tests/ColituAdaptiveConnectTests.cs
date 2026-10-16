@@ -103,6 +103,17 @@ public class ColituAdaptiveConnectTests
     }
 
     [Fact]
+    public void Rank_NeverPicksAlphaServers_EvenWhenFastestOrRemembered()
+    {
+        var servers = new[] { new ColituVpnServer { Id = "csl", CountryCode = "SE", Available = true, Alpha = true }, Server("de1", "DE"), Server("nl1", "NL") };
+        var memory = new ColituAdaptiveMemory();
+        memory.RememberGoodServer(Wifi, "csl", Now.AddMinutes(-5));
+
+        Rank(servers, Pings(("csl", 5), ("de1", 80), ("nl1", 60)), memory).Should().Equal("nl1", "de1");
+        ColituAdaptiveConnect.AutoExcluded(servers[0]).Should().BeTrue();
+    }
+
+    [Fact]
     public void Rank_LastGoodServerOnThisNetwork_GoesFirst()
     {
         var servers = new[] { Server("a"), Server("b"), Server("c") };

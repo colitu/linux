@@ -47,8 +47,9 @@ public static class ColituAdaptiveConnect
     public static readonly IReadOnlySet<string> AutoExcludedCountries =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "RU" };
 
+    /// <summary>Also a CSL alpha test node: it can be chosen by hand, never automatically.</summary>
     public static bool AutoExcluded(ColituVpnServer server) =>
-        AutoExcludedCountries.Contains(server.CountryCode?.Trim() ?? "");
+        server.Alpha || AutoExcludedCountries.Contains(server.CountryCode?.Trim() ?? "");
 
     /// <summary>
     /// A successful ping older than <see cref="PingFreshFor"/> (same network) still orders the servers

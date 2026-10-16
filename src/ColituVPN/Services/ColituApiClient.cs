@@ -448,6 +448,7 @@ public sealed class ColituApiClient
             Premium = false,
             Free = true,
             Locked = false,
+            Alpha = dto.Alpha == true,
             Host = dto.LatencyHost,
             Port = dto.LatencyPort,
             Categories = (dto.Categories ?? []).Select(value => value.Trim().ToLowerInvariant()).Where(value => value.Length > 0).Distinct().ToList(),
@@ -980,6 +981,8 @@ internal sealed class ColituServerDto
     [JsonPropertyName("services")] public List<string>? Services { get; set; }
     [JsonPropertyName("latency_host")] public string? LatencyHost { get; set; }
     [JsonPropertyName("latency_port")] public int? LatencyPort { get; set; }
+    /// <summary>Hidden CSL test node, sent to tester accounts only.</summary>
+    [JsonPropertyName("alpha")] public bool? Alpha { get; set; }
     // Multihop routes only.
     [JsonPropertyName("multihop")] public bool? Multihop { get; set; }
     [JsonPropertyName("route_slug")] public string? RouteSlug { get; set; }

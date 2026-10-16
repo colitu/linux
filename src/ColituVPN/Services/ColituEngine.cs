@@ -184,7 +184,7 @@ internal sealed class ColituEngine : IDisposable
     internal static JsonObject RankRequest(IEnumerable<ColituVpnServer> servers, IReadOnlyDictionary<string, ColituPingSample> pings,
         ColituAdaptiveMemory memory, string networkKey, string? clientCountry, DateTimeOffset now)
     {
-        var list = servers.Where(server => !string.IsNullOrWhiteSpace(server.Id)).ToList();
+        var list = servers.Where(server => !string.IsNullOrWhiteSpace(server.Id) && !server.Alpha).ToList();
         var serverArray = new JsonArray();
         var pingObject = new JsonObject();
         var penalized = new JsonArray();
