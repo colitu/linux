@@ -12,7 +12,7 @@ public partial class ColituMainWindow
     {
         ManageAccountButton.Click += (_, _) => OpenUrl(LocalizedPath("/account"));
         // Two-factor authentication is set up on the website only.
-        SecurityButton.Click += (_, _) => OpenUrl(LocalizedPath("/account/security"));
+        SecurityButton.Click += (_, _) => OpenUrl($"{AccountPortalUrl}/security");
         // Config export (VLESS/Hysteria2 links for other clients) lives on the website for now.
         ManualConfigButton.Click += (_, _) => OpenUrl(ManualConfigUrl);
         SupportButton.Click += (_, _) => Navigate("support");
@@ -37,7 +37,8 @@ public partial class ColituMainWindow
         ConfirmCancelButton.Click += (_, _) => CloseConfirm(false);
     }
 
-    private const string ManualConfigUrl = "https://colitu.com/account/manual-config";
+    // Account pages live at the root of app.colitu.com (/account/... is a 404).
+    private const string ManualConfigUrl = $"{AccountPortalUrl}/manual-config";
 
     // ── Devices ────────────────────────────────────────────────────────────
     private async Task LoadDevicesAsync()

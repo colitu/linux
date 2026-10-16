@@ -662,6 +662,13 @@ public partial class ColituMainWindow : Window
 
         var keepRunning = _vpn.Preferences.CloseToTray && AppView.IsVisible && _trayIcon != null;
         e.Cancel = true;
+        if (keepRunning && ColituShell.HasTrayHost() == false)
+        {
+            // No tray on this desktop (GNOME without AppIndicator): a hidden window could never
+            // be opened again, so it stays in the task bar and the connection keeps running.
+            WindowState = WindowState.Minimized;
+            return;
+        }
         if (keepRunning)
         {
             Hide();

@@ -72,6 +72,76 @@ public static class ColituShell
         return XdgOpen(full);
     }
 
+    /// <summary>
+    /// False when the desktop shows no tray icons (GNOME without the AppIndicator extension): the
+    /// tray icon is then created without an error but never appears. Null when it cannot be told.
+    /// </summary>
+    public static bool? HasTrayHost()
+    {
+        const string watcher = "org.kde.StatusNotifierWatcher";
+        var gdbus = SystemBinary("gdbus");
+        if (File.Exists(gdbus))
+        {
+            return ParseNameHasOwner(Run(gdbus, "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.DBus",
+                "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner", watcher));
+        }
+        var dbusSend = SystemBinary("dbus-send");
+        if (File.Exists(dbusSend))
+        {
+            return ParseNameHasOwner(Run(dbusSend, "--session", "--print-reply", "--reply-timeout=1000", "--dest=org.freedesktop.DBus",
+                "/org/freedesktop/DBus", "org.freedesktop.DBus.NameHasOwner", $"string:{watcher}"));
+        }
+        return null;
+    }
+
+    /// <summary>gdbus prints "(true,)", dbus-send "boolean true".</summary>
+    internal static bool? ParseNameHasOwner(string? output)
+    {
+        if (output == null)
+        {
+            return null;
+        }
+        if (output.Contains("true", StringComparison.Ordinal))
+        {
+            return true;
+        }
+        return output.Contains("false", StringComparison.Ordinal) ? false : null;
+    }
+
+    private static string? Run(string program, params string[] args)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo(program)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                return null;
+            }
+            var output = process.StandardOutput.ReadToEndAsync();
+            if (!process.WaitForExit(2000))
+            {
+                try { process.Kill(); } catch { /* already gone */ }
+                return null;
+            }
+            return process.ExitCode == 0 ? output.Result : null;
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituShell.Run", ex);
+            return null;
+        }
+    }
+
     private static bool XdgOpen(string target)
     {
         try

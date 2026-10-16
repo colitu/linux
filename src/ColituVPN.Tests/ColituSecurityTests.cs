@@ -102,6 +102,18 @@ public class ColituSecurityTests
     }
 
     [Theory]
+    [InlineData("(true,)\n", true)]
+    [InlineData("(false,)\n", false)]
+    [InlineData("method return time=1.0 sender=org.freedesktop.DBus\n   boolean true\n", true)]
+    [InlineData("method return time=1.0 sender=org.freedesktop.DBus\n   boolean false\n", false)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Shell_TrayHostAnswerIsRead(string? output, bool? expected)
+    {
+        ColituShell.ParseNameHasOwner(output).Should().Be(expected);
+    }
+
+    [Theory]
     [InlineData("+0300 2026-09-25 01:18:22 INFO [4279361987 36ms] dns: exchanged A www.example.com. 5 IN A 93.184.216.34")]
     [InlineData("+0300 2026-09-25 01:18:22 DEBUG [1] router: match[0] => direct")]
     [InlineData("2026/09/25 01:18:22 [Info] app/dispatcher: sniffed domain: example.com")]
