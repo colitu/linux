@@ -948,9 +948,10 @@ internal sealed class ColituServerListDto
 
 internal sealed class ColituNetworkHintsDto
 {
-    [JsonPropertyName("blocked")] public List<string>? Blocked { get; set; }
+    /// <summary>A JSON array in practice; kept raw so that a number or object in it cannot fail the whole server list (see <see cref="ColituNetworkHintsPolicy.ParseProtocols"/>).</summary>
+    [JsonPropertyName("blocked")] public System.Text.Json.JsonElement? Blocked { get; set; }
     /// <summary>Protocols that worked for most devices on this network, best first (Adaptive Connect 3.0).</summary>
-    [JsonPropertyName("preferred")] public List<string>? Preferred { get; set; }
+    [JsonPropertyName("preferred")] public System.Text.Json.JsonElement? Preferred { get; set; }
     /// <summary>"network" (this ISP network) or "country" (too little data for the network).</summary>
     [JsonPropertyName("scope")] public string? Scope { get; set; }
     [JsonPropertyName("updated_at")] public string? UpdatedAt { get; set; }

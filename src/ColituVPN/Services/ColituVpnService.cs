@@ -3082,10 +3082,27 @@ public sealed class ColituVpnService
     }
 
     /// <summary>
-    /// Reality with the vision flow is the fastest and most robust transport on
-    /// this core, plain Shadowsocks the least; a transport that stalled recently
-    /// (on this server, or on this network as a whole) goes to the back of the line for a while.
-    /// The one that last carried traffic on this server and network goes first while reachable.
+    /// Fixed order of the transports by how well they survive lossy links and censorship (the shared
+    /// Adaptive Connect vectors, engine/transport.go): Hysteria2 (QUIC) keeps working where TCP
+    /// transports stall; Reality with the vision flow is the most robust TCP transport; Trojan and
+    /// plain Shadowsocks are recognised by DPI the fastest, so they only follow. Measured latency
+    /// only breaks ties.
+    /// </summary>
+    internal static int TransportPriority(string protocol) => protocol switch
+    {
+        "hysteria2" => 0,
+        "vless-reality" => 1,
+        "vless-xhttp" => 2,
+        "trojan" => 3,
+        "shadowsocks" => 4,
+        _ => 5
+    };
+
+    /// <summary>
+    /// <see cref="TransportPriority"/>, with unreachable endpoints and transports that stalled
+    /// recently (on this server, or on this network as a whole) moved to the back of the line for a
+    /// while. The transport that last carried traffic on this server and network goes first while
+    /// it is reachable.
     /// </summary>
     private int TransportRank(string protocol, int latencyMs, string? serverId, string? lastGood = null) =>
         TransportRank(protocol, latencyMs, _adaptive.IsStalled(_networkKey, serverId, protocol, DateTimeOffset.UtcNow),
@@ -3099,24 +3116,18 @@ public sealed class ColituVpnService
         {
             return -1;
         }
-        // Hysteria2 (QUIC) keeps working on lossy links where TCP transports stall, so it leads;
-        // the TCP transports then follow in measured-latency order (ThenBy), unreachable ones last.
-        var rank = protocol switch
-        {
-            "hysteria2" => 0,
-            _ => 1
-        };
+        var rank = TransportPriority(protocol);
         if (latencyMs < 0 && protocol != "hysteria2")
-        {
-            rank += 5;
-        }
-        if (stalledRecently)
         {
             rank += 10;
         }
-        if (hintedBlocked)
+        if (stalledRecently)
         {
             rank += 20;
+        }
+        if (hintedBlocked)
+        {
+            rank += 40;
         }
         return rank;
     }

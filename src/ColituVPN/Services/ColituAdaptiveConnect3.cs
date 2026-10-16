@@ -60,20 +60,35 @@ internal static class ColituAdaptiveConnect3
 /// </summary>
 public static class ColituNetworkHintsPolicy
 {
-    /// <summary>The panel sends a handful of protocols; more than this is noise.</summary>
-    public const int MaxProtocols = 8;
-
-    /// <summary>Lowercase, trimmed, no empties, no duplicates (in the panel's order).</summary>
-    public static List<string> ParseProtocols(IEnumerable<string?>? raw) =>
-        (raw ?? [])
-            .Where(protocol => !string.IsNullOrWhiteSpace(protocol))
-            .Select(protocol => protocol!.Trim().ToLowerInvariant())
-            .Distinct()
-            .Take(MaxProtocols)
-            .ToList();
+    /// <summary>
+    /// Lowercase, trimmed, no empties, no duplicates (in the panel's order). Values that are not
+    /// strings are ignored, a list that is missing or not an array is empty, a long list is kept whole
+    /// (shared vectors, engine/transport.go ParseProtocols).
+    /// </summary>
+    public static List<string> ParseProtocols(JsonElement? raw)
+    {
+        var result = new List<string>();
+        if (raw is not { ValueKind: JsonValueKind.Array } list)
+        {
+            return result;
+        }
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || item.GetString() is not { } text)
+            {
+                continue;
+            }
+            var protocol = text.Trim().ToLowerInvariant();
+            if (protocol.Length > 0 && !result.Contains(protocol))
+            {
+                result.Add(protocol);
+            }
+        }
+        return result;
+    }
 
     /// <summary><c>preferred</c> like <c>blocked</c>, without any protocol that is also blocked.</summary>
-    public static List<string> ParsePreferred(IEnumerable<string?>? preferred, IEnumerable<string?>? blocked)
+    public static List<string> ParsePreferred(JsonElement? preferred, JsonElement? blocked)
     {
         var blockedSet = ParseProtocols(blocked).ToHashSet(StringComparer.Ordinal);
         return ParseProtocols(preferred).Where(protocol => !blockedSet.Contains(protocol)).ToList();
@@ -130,6 +145,9 @@ internal sealed class ColituRecoverySet
     /// <summary>At most one fetch attempt in this time, successful or not.</summary>
     public static readonly TimeSpan AttemptEvery = TimeSpan.FromHours(6);
 
+    /// <summary>A generated_at this far in the future means the clock moved back: the set is due.</summary>
+    private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(5);
+
     public DateTimeOffset GeneratedAt { get; private init; }
     public DateTimeOffset RecoveryUntil { get; private init; }
     /// <summary>Servers in the panel's order (one per country first); every envelope has a server id.</summary>
@@ -137,7 +155,7 @@ internal sealed class ColituRecoverySet
 
     private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true };
 
-    /// <summary>The set, or null when the JSON is not one: no valid <c>recovery_until</c>, no usable server.</summary>
+    /// <summary>The set, or null when the JSON is not one: no valid <c>generated_at</c> or <c>recovery_until</c>, no usable server.</summary>
     public static ColituRecoverySet? Parse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -147,7 +165,7 @@ internal sealed class ColituRecoverySet
         try
         {
             var dto = JsonSerializer.Deserialize<ColituRecoveryDto>(json, Options);
-            if (dto?.RecoveryUntil is not { } until)
+            if (dto?.RecoveryUntil is not { } until || dto.GeneratedAt is not { } generatedAt)
             {
                 return null;
             }
@@ -167,7 +185,7 @@ internal sealed class ColituRecoverySet
             }
             return configs.Count == 0
                 ? null
-                : new ColituRecoverySet { GeneratedAt = dto.GeneratedAt ?? DateTimeOffset.MinValue, RecoveryUntil = until, Configs = configs };
+                : new ColituRecoverySet { GeneratedAt = generatedAt, RecoveryUntil = until, Configs = configs };
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
         {
@@ -199,11 +217,12 @@ internal sealed class ColituRecoverySet
     /// </summary>
     public static bool RefreshDue(DateTimeOffset? storedGeneratedAt, DateTimeOffset? lastAttempt, DateTimeOffset now)
     {
-        if (lastAttempt is { } attempt && now - attempt < AttemptEvery && attempt <= now + TimeSpan.FromMinutes(5))
+        // An attempt dated in the future is ignored (the clock moved back).
+        if (lastAttempt is { } attempt && attempt <= now && now - attempt < AttemptEvery)
         {
             return false;
         }
-        return storedGeneratedAt is not { } generated || now - generated >= RefreshAfter || generated > now + TimeSpan.FromMinutes(5);
+        return storedGeneratedAt is not { } generated || now - generated >= RefreshAfter || generated - now > ClockSkew;
     }
 
     /// <summary>

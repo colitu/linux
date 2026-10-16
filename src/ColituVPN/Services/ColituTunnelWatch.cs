@@ -257,8 +257,11 @@ public static class ColituParallelConnect
 public static class ColituTransportOrder
 {
     /// <summary>The marks would leave at most one of two or more offered transports.</summary>
-    public static bool MarksCoverAlmostAll(IReadOnlyCollection<string> offered, Func<string, bool> stalled) =>
-        offered.Count >= 2 && offered.Count(protocol => !stalled(protocol)) <= 1;
+    public static bool MarksCoverAlmostAll(IReadOnlyCollection<string> offered, Func<string, bool> stalled)
+    {
+        var distinct = offered.Distinct().ToList();
+        return distinct.Count >= 2 && distinct.Count(protocol => !stalled(protocol)) <= 1;
+    }
 
     /// <summary>The tier of a transport in a round whose marks are ignored (lower goes first).</summary>
     public static int IgnoredMarksTier(string protocol, Func<string, bool> proven, Func<string, bool> stalled, Func<string, bool> failedThisRound) =>
