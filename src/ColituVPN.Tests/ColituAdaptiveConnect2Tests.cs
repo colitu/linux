@@ -339,9 +339,10 @@ public class ColituAdaptiveConnect2Tests
     }
 
     [Theory]
-    [InlineData(true, true, true)]
-    [InlineData(false, true, false)]
-    [InlineData(true, false, false)]
-    public void DeadServer_LeftOnlyInAutomaticModeWithInternet(bool automatic, bool internetDirect, bool leave) =>
-        ColituVpnService.ShouldLeaveServerAfterRestart(automatic, internetDirect).Should().Be(leave);
+    [InlineData(true, true, true, true)]
+    [InlineData(false, true, true, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, true, false, false)]
+    public void DeadServer_LeftOnlyInAutomaticModeWhenBothPathsDied(bool automatic, bool internetDirect, bool bothPathsDead, bool leave) =>
+        ColituVpnService.ShouldLeaveServerAfterRestart(automatic, internetDirect, bothPathsDead).Should().Be(leave);
 }

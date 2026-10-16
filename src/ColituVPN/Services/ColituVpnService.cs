@@ -2017,7 +2017,7 @@ public sealed class ColituVpnService
             ? $"The primary misses behind a dead spare ({detail}); reconnecting"
             : $"Both paths carry no traffic ({detail}); reconnecting");
         // The watcher only gets here with the internet working outside the tunnel.
-        if (ShouldLeaveServerAfterRestart(IsAutoSelection, internetDirect: true) && ConnectedServer?.Id is { } deadServer)
+        if (ShouldLeaveServerAfterRestart(IsAutoSelection, internetDirect: true, bothPathsDead: true) && ConnectedServer?.Id is { } deadServer)
         {
             // Primary and spare carried nothing: the reconnect would try this server's transports
             // first (about 9 s on Windows) before the next server.
@@ -2029,10 +2029,11 @@ public sealed class ColituVpnService
     }
 
     /// <summary>
-    /// Automatic mode leaves a server whose paths all died mid-session while the internet works
-    /// outside the tunnel. A server the user picked is kept.
+    /// Automatic mode leaves a server whose primary and spare both died mid-session while the
+    /// internet works outside the tunnel. A server the user picked is kept. Same rule on Windows
+    /// and Android.
     /// </summary>
-    internal static bool ShouldLeaveServerAfterRestart(bool automatic, bool internetDirect) => automatic && internetDirect;
+    internal static bool ShouldLeaveServerAfterRestart(bool automatic, bool internetDirect, bool bothPathsDead) => automatic && internetDirect && bothPathsDead;
 
     /// <summary>The spare server's addresses were remembered with its settings: re-apply the kill switch rules.</summary>
     private async Task AllowSpareServerAsync(ColituSpareServer spare)
