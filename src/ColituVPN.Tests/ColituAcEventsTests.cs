@@ -121,6 +121,30 @@ public class ColituAcEventsTests : IDisposable
         events[1].Ms.Should().Be(0);
     }
 
+    /// <summary>
+    /// The panel (appinsight/ac.go) refuses a whole report with 400 when the platform, the app version or the
+    /// network type is outside its lists, and the app then drops the batch for good. What this build really
+    /// sends must pass those checks.
+    /// </summary>
+    [Fact]
+    public void Request_PassesThePanelsEnvelopeChecks()
+    {
+        // appinsight.versionPattern
+        System.Text.RegularExpressions.Regex.IsMatch(ColituAuthService.ClientVersion, "^[0-9][0-9.]{0,31}$").Should().BeTrue();
+        ColituInsightSpec.Platform.Should().Be("linux");
+        ColituAuthService.ClientPlatform.Should().Be(ColituInsightSpec.Platform);
+        // appinsight.acNetworks: "" plus these four; the Linux link kinds and anything unknown stay inside.
+        foreach (var kind in new[] { "wifi", "ethernet", "cellular", "other", "none", "unknown", "WIFI", " ethernet ", null })
+        {
+            ColituAcSpec.NetworkType(kind).Should().BeOneOf("", "wifi", "ethernet", "cellular", "other");
+        }
+        var insights = Create();
+        insights.AddEvent(Probe(NodeA), Now);
+        var body = Json(insights.BuildEventBatch(Now, ColituAuthService.ClientVersion, "", ColituNetwork.LinkKind())!.Body);
+        body.GetProperty("network_type").GetString().Should().BeOneOf("", "wifi", "ethernet", "cellular", "other");
+        System.Text.RegularExpressions.Regex.IsMatch(body.GetProperty("app_version").GetString()!, "^[0-9][0-9.]{0,31}$").Should().BeTrue();
+    }
+
     // ── Request ────────────────────────────────────────────────────────────
     [Fact]
     public void Request_HasTheContractedEnvelope()
