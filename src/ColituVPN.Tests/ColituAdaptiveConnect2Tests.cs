@@ -20,6 +20,49 @@ public class ColituAdaptiveConnect2Tests
     }
 
     [Fact]
+    public void Watch_AfterAMiss_ConfirmsEverySecond_AndCallsTheOutageOnTheThirdMiss()
+    {
+        var watch = new ColituTunnelWatch();
+        watch.Confirming.Should().BeFalse();
+        ColituTunnelWatch.Interval(TimeSpan.FromMinutes(5), watch.Confirming).Should().Be(TimeSpan.FromSeconds(30));
+
+        watch.Round(primaryOk: null, normalOk: false, online: true).Should().Be(ColituWatchAction.None);
+        watch.Confirming.Should().BeTrue();
+        ColituTunnelWatch.Interval(TimeSpan.FromMinutes(5), watch.Confirming).Should().Be(TimeSpan.FromSeconds(1));
+        watch.Round(null, false, true).Should().Be(ColituWatchAction.None);
+        watch.Round(null, false, true).Should().Be(ColituWatchAction.PrimaryDead);
+
+        // A check that passes ends the quick pace.
+        watch.Round(null, false, true);
+        watch.Round(null, true, true);
+        watch.Confirming.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Watch_DeferredVerdict_DoesNotProbeEverySecond_UntilACheckPasses()
+    {
+        var watch = new ColituTunnelWatch();
+        watch.Round(null, false, true);
+        watch.Defer(ColituWatchAction.PrimaryDead);
+        watch.Confirming.Should().BeFalse();
+        watch.Round(null, false, true).Should().Be(ColituWatchAction.PrimaryDead);
+        watch.Round(null, true, true);
+        watch.Round(null, false, true);
+        watch.Confirming.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Watch_PrimaryDeclaredDeadBehindAWorkingSpare_GoesBackToTheNormalPace()
+    {
+        var watch = new ColituTunnelWatch();
+        watch.Round(false, true, true);
+        watch.Confirming.Should().BeTrue();
+        watch.Round(false, true, true);
+        watch.Round(false, true, true).Should().Be(ColituWatchAction.SpareCarries);
+        watch.Confirming.Should().BeFalse();
+    }
+
+    [Fact]
     public void WithoutSpare_ThreeMissesWhileOnline_PrimaryDead_OfflineCountsNothing()
     {
         var watch = new ColituTunnelWatch();
@@ -294,4 +337,11 @@ public class ColituAdaptiveConnect2Tests
         root["outbounds"]!.AsArray().Single(item => item!["tag"]!.GetValue<string>() == "warm-spare")!["tcp_keep_alive"]!.GetValue<string>().Should().Be("10s");
         root["outbounds"]!.AsArray().Single(item => item!["tag"]!.GetValue<string>() == "proxy-main")!["tcp_keep_alive"].Should().BeNull("Hysteria2 is QUIC");
     }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    public void DeadServer_LeftOnlyInAutomaticModeWithInternet(bool automatic, bool internetDirect, bool leave) =>
+        ColituVpnService.ShouldLeaveServerAfterRestart(automatic, internetDirect).Should().Be(leave);
 }

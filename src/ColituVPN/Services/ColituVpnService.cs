@@ -2016,8 +2016,23 @@ public sealed class ColituVpnService
         LogConnection(_watch.SpareDeadUnreplaced
             ? $"The primary misses behind a dead spare ({detail}); reconnecting"
             : $"Both paths carry no traffic ({detail}); reconnecting");
+        // The watcher only gets here with the internet working outside the tunnel.
+        if (ShouldLeaveServerAfterRestart(IsAutoSelection, internetDirect: true) && ConnectedServer?.Id is { } deadServer)
+        {
+            // Primary and spare carried nothing: the reconnect would try this server's transports
+            // first (about 9 s on Windows) before the next server.
+            _adaptive.Penalize(_networkKey, deadServer, DateTimeOffset.UtcNow);
+            SaveState();
+            LogConnection($"Server {deadServer} carried nothing on either path; penalized for 30 minutes, the reconnect starts on the next server");
+        }
         await OnTunnelLostAsync(ColituAcSpec.ReasonOfText(detail ?? "no traffic"));
     }
+
+    /// <summary>
+    /// Automatic mode leaves a server whose paths all died mid-session while the internet works
+    /// outside the tunnel. A server the user picked is kept.
+    /// </summary>
+    internal static bool ShouldLeaveServerAfterRestart(bool automatic, bool internetDirect) => automatic && internetDirect;
 
     /// <summary>The spare server's addresses were remembered with its settings: re-apply the kill switch rules.</summary>
     private async Task AllowSpareServerAsync(ColituSpareServer spare)
@@ -2064,7 +2079,8 @@ public sealed class ColituVpnService
 
 
     // ── Adaptive Connect 2.0: mid-session watcher, spare probe, spare swap ──
-    private static readonly TimeSpan WatchProbeTimeout = TimeSpan.FromSeconds(4);
+    /// <summary>A check through a working tunnel answers in well under a second; 3 s is a miss.</summary>
+    private static readonly TimeSpan WatchProbeTimeout = TimeSpan.FromSeconds(3);
 
     /// <summary>
     /// Every 5 s for the first 90 s after the connect, then every 30 s (every transport). With a spare
@@ -2075,7 +2091,7 @@ public sealed class ColituVpnService
     {
         SampleTraffic(now);
         var sinceConnect = ConnectedAt is { } at ? DateTimeOffset.Now - at : TimeSpan.Zero;
-        if (now - _lastTrafficCheckAt < (long)ColituTunnelWatch.Interval(sinceConnect).TotalMilliseconds)
+        if (now - _lastTrafficCheckAt < (long)ColituTunnelWatch.Interval(sinceConnect, _watch.Confirming).TotalMilliseconds)
         {
             await WatchSpareAsync(now);
             return;

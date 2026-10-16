@@ -20,7 +20,9 @@ public readonly record struct SwapDecision(bool Now, string Reason, string Key);
 
 /// <summary>
 /// Adaptive Connect 2.0 mid-session watcher (every transport, not only Hysteria2). Every 5 s for
-/// the first 90 s after the connect, then every 30 s. With a warm spare each round checks the
+/// the first 90 s after the connect, then every 30 s; after a miss every 1 s until the miss is
+/// confirmed or cleared, so an outage is called about 11 s after it is first seen (it took 30-60 s
+/// at the slow pace: 3 misses 30 s apart). With a warm spare each round checks the
 /// primary alone (the <c>colitu-verify</c> inbound) and the normal path; 3 misses while the device
 /// is online make the primary dead. Primary dead with the normal path working is no reason to
 /// reconnect: the spare carries the traffic. Pure state, unit tested.
@@ -33,6 +35,14 @@ public sealed class ColituTunnelWatch
     public const int MissesForDead = 3;
     /// <summary>With a dead spare nothing could replace, the primary is given up sooner.</summary>
     public const int MissesForDeadWithoutSpare = 2;
+    /// <summary>The pace while a miss is being confirmed.</summary>
+    public static readonly TimeSpan ConfirmInterval = TimeSpan.FromSeconds(1);
+
+    // A verdict that could not be acted on (Defer): no quick rounds until a check passes again.
+    private bool _deferred;
+
+    /// <summary>A miss waits for confirmation: the next round comes after <see cref="ConfirmInterval"/>.</summary>
+    public bool Confirming => !_deferred && (NormalMisses > 0 || (PrimaryMisses > 0 && !PrimaryDeclaredDead));
 
     public int PrimaryMisses { get; private set; }
     public int NormalMisses { get; private set; }
@@ -43,12 +53,15 @@ public sealed class ColituTunnelWatch
 
     public static TimeSpan Interval(TimeSpan sinceConnect) => sinceConnect < FastPhase ? FastInterval : SlowInterval;
 
+    public static TimeSpan Interval(TimeSpan sinceConnect, bool confirming) => confirming ? ConfirmInterval : Interval(sinceConnect);
+
     public void Reset()
     {
         PrimaryMisses = 0;
         NormalMisses = 0;
         PrimaryDeclaredDead = false;
         SpareDeadUnreplaced = false;
+        _deferred = false;
     }
 
     /// <summary>
@@ -64,6 +77,7 @@ public sealed class ColituTunnelWatch
             case ColituWatchAction.PrimaryDead:
             case ColituWatchAction.Reconnect:
                 NormalMisses = Math.Max(NormalMisses, MissesForDead - 1);
+                _deferred = true;
                 break;
         }
     }
@@ -74,6 +88,10 @@ public sealed class ColituTunnelWatch
     public ColituWatchAction Round(bool? primaryOk, bool normalOk, bool online)
     {
         var anyMiss = primaryOk == false || !normalOk;
+        if (!anyMiss)
+        {
+            _deferred = false;
+        }
         if (anyMiss && !online)
         {
             return ColituWatchAction.Offline;
