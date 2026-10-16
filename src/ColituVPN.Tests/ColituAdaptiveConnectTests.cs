@@ -109,7 +109,7 @@ public class ColituAdaptiveConnectTests
         var memory = new ColituAdaptiveMemory();
         memory.RememberGoodServer(Wifi, "c", Now.AddHours(-2));
 
-        Rank(servers, Pings(("a", 20), ("b", 30), ("c", 80)), memory).Should().Equal("c", "a", "b");
+        Rank(servers, Pings(("a", 20), ("b", 30), ("c", 70)), memory).Should().Equal("c", "a", "b");
         Rank(servers, memory: memory).Should().Equal("c", "a", "b");
         // Another network: the memory is not applied there.
         Rank(servers, memory: memory, network: Lte).Should().Equal("a", "b", "c");
@@ -128,9 +128,9 @@ public class ColituAdaptiveConnectTests
 
         // Was: us1 first (300 ms against 40 ms).
         Rank(servers, Pings(("us1", 300), ("de1", 40), ("nl1", 55)), memory, country: "TR").Should().Equal("de1", "nl1", "us1");
-        // Just over the limit (2 x 40 + 50 = 130 ms) is still clearly worse; at it the memory wins.
-        Rank(servers, Pings(("us1", 131), ("de1", 40), ("nl1", 55)), memory).Should().Equal("de1", "nl1", "us1");
-        Rank(servers, Pings(("us1", 130), ("de1", 40), ("nl1", 55)), memory).Should().Equal("us1", "de1", "nl1");
+        // A candidate at least 40 % and 60 ms faster beats the memory (same rule on every platform).
+        Rank(servers, Pings(("us1", 100), ("de1", 40), ("nl1", 55)), memory).Should().Equal("de1", "nl1", "us1");
+        Rank(servers, Pings(("us1", 99), ("de1", 40), ("nl1", 55)), memory).Should().Equal("us1", "de1", "nl1");
     }
 
     [Fact]

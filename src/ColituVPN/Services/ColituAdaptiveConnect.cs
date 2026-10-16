@@ -51,16 +51,6 @@ public static class ColituAdaptiveConnect
         AutoExcludedCountries.Contains(server.CountryCode?.Trim() ?? "");
 
     /// <summary>
-    /// The last server that worked on this network keeps the first place only while its measured
-    /// ping is not clearly worse than the best one's: more than <see cref="LastGoodSlackFactor"/> times
-    /// plus <see cref="LastGoodSlackMs"/> ms. (Without the check one connection, even a manual pick of
-    /// a far server, made that server "best" for 24 h whatever its ping.)
-    /// </summary>
-    public const double LastGoodSlackFactor = 2.0;
-
-    public const int LastGoodSlackMs = 50;
-
-    /// <summary>
     /// A successful ping older than <see cref="PingFreshFor"/> (same network) still orders the servers
     /// for this long, after a network change or a wake-up, instead of dropping back to the panel's
     /// order, in which a far server can come first. A failed ping is only believed while fresh.
@@ -95,14 +85,35 @@ public static class ColituAdaptiveConnect
     }
 
     /// <summary>
+    /// Client countries where a server in the client's own country cannot open the sites blocked
+    /// there, so automatic mode puts such servers after the foreign ones. Everywhere else a
+    /// home-country server competes on latency like any other. Same list on every platform.
+    /// </summary>
+    public static readonly IReadOnlySet<string> HomePushbackCountries = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "RU", "BY", "KZ", "UZ", "TM", "TJ", "KG", "AZ", "IR", "CN", "TR", "VN", "PK", "EG", "SA", "AE", "ET", "MM"
+    };
+
+    /// <summary>The remembered server yields to a fresh candidate at least this much faster (fraction of its latency)...</summary>
+    public const double MemoryBeatenFraction = 0.4;
+
+    /// <summary>...and at least this many ms faster.</summary>
+    public const int MemoryBeatenMs = 60;
+
+    /// <summary>
     /// Servers of the list in the order automatic mode tries them (multihop routes, unavailable
-    /// and locked servers and those in <see cref="AutoExcludedCountries"/> left out). The "best server" entry shows rank[0], and connect uses it:
+    /// and locked servers and those in <see cref="AutoExcludedCountries"/> left out). The "best
+    /// server" entry shows rank[0], and connect uses it. The same rules on every platform (shared
+    /// test vectors, colitu-csl engine/testdata/ac-vectors/ranking.json):
     /// <list type="number">
-    /// <item>penalized on this network: last (the oldest penalty first, so retries rotate);</item>
+    /// <item>penalized on this network: last, the oldest penalty first (retries rotate);</item>
     /// <item>a fresh ping that failed: after all others except the penalized ones;</item>
-    /// <item>the user's own country (when known): after the foreign ones;</item>
-    /// <item>the last server that worked on this network: first, unless its ping is clearly worse than the best one's;</item>
-    /// <item>successful pings (fresh, else up to 6 h old on this network), fastest first;</item>
+    /// <item>the user's own country after the foreign ones, only when the client is in one of
+    /// <see cref="HomePushbackCountries"/>;</item>
+    /// <item>the last server that worked on this network first, unless its ping is known and a
+    /// candidate of the same standing is at least <see cref="MemoryBeatenFraction"/> and
+    /// <see cref="MemoryBeatenMs"/> ms faster;</item>
+    /// <item>successful pings (fresh, or up to 6 h old on this network), fastest first;</item>
     /// <item>servers without a usable ping keep the panel's order, after the pinged ones.</item>
     /// </list>
     /// </summary>
@@ -114,7 +125,8 @@ public static class ColituAdaptiveConnect
         string? clientCountry,
         DateTimeOffset now)
     {
-        var country = clientCountry?.Trim();
+        var country = clientCountry?.Trim().ToUpperInvariant();
+        var pushHome = country is { Length: 2 } && HomePushbackCountries.Contains(country);
         var lastGood = memory.LastGoodServer(networkKey, now);
         var items = servers
             .Where(server => !string.IsNullOrWhiteSpace(server.Id) && !server.IsMultihop && server.Available && !server.Locked && !AutoExcluded(server))
@@ -124,40 +136,34 @@ public static class ColituAdaptiveConnect
             {
                 var sample = pings.TryGetValue(server.Id!, out var found) ? found : null;
                 var fresh = sample != null && sample.IsFresh(networkKey, now);
-                var penalizedAt = memory.PenalizedAt(networkKey, server.Id, now);
                 return new
                 {
                     Server = server,
                     Index = index,
-                    Penalized = penalizedAt != null,
-                    PenalizedAt = penalizedAt ?? DateTimeOffset.MinValue,
+                    PenalizedAt = memory.PenalizedAt(networkKey, server.Id, now),
                     PingFailed = fresh && sample!.Ms == null,
-                    OwnCountry = !string.IsNullOrEmpty(country) && string.Equals(server.CountryCode?.Trim(), country, StringComparison.OrdinalIgnoreCase),
+                    OwnCountry = pushHome && string.Equals(server.CountryCode?.Trim(), country, StringComparison.OrdinalIgnoreCase),
                     LastGood = lastGood != null && string.Equals(server.Id, lastGood, StringComparison.OrdinalIgnoreCase),
+                    // A successful ping up to 6 h old on this network still orders (after a wake-up the
+                    // panel order can put a far server first); a failed one only while fresh.
                     PingMs = fresh ? sample!.Ms : sample != null && sample.IsUsable(networkKey, now) ? sample.Ms : null
                 };
             })
             .ToList();
-        // The best measured ping of each group (own country / foreign) among servers that can be picked.
-        var best = items
-            .Where(item => !item.Penalized && !item.PingFailed && item.PingMs != null)
-            .GroupBy(item => item.OwnCountry)
-            .ToDictionary(group => group.Key, group => group.Min(item => item.PingMs!.Value));
+        // The remembered server steps aside for a clearly faster one of the same standing.
+        var remembered = items.FirstOrDefault(item => item.LastGood);
+        var memoryBeaten = remembered?.PingMs is { } rememberedMs && items.Any(other =>
+            !other.LastGood && other.PingMs is { } ms
+            && (other.PenalizedAt != null) == (remembered.PenalizedAt != null) && other.PingFailed == remembered.PingFailed && other.OwnCountry == remembered.OwnCountry
+            && rememberedMs - ms >= MemoryBeatenMs && ms <= rememberedMs * (1 - MemoryBeatenFraction));
         return items
-            .Select(item => new
-            {
-                item.Server, item.Index, item.Penalized, item.PenalizedAt, item.PingFailed, item.OwnCountry, item.PingMs,
-                // A last-good server whose ping is clearly worse than the best one's no longer leads.
-                LastGood = item.LastGood && !(item.PingMs is { } own && best.TryGetValue(item.OwnCountry, out var fastest)
-                    && own > fastest * LastGoodSlackFactor + LastGoodSlackMs)
-            })
-            .OrderBy(item => item.Penalized)
-            .ThenBy(item => item.PenalizedAt)
+            .OrderBy(item => item.PenalizedAt != null)
+            // Penalized ones rotate: the oldest penalty first.
+            .ThenBy(item => item.PenalizedAt ?? DateTimeOffset.MinValue)
             .ThenBy(item => item.PingFailed)
             .ThenBy(item => item.OwnCountry)
-            .ThenBy(item => !item.LastGood)
-            .ThenBy(item => item.PingMs == null)
-            .ThenBy(item => item.PingMs ?? 0)
+            .ThenBy(item => memoryBeaten || !item.LastGood)
+            .ThenBy(item => item.PingMs ?? int.MaxValue)
             .ThenBy(item => item.Index)
             .Select(item => item.Server)
             .ToList();
