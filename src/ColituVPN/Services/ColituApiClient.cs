@@ -236,7 +236,8 @@ public sealed class ColituApiClient
             Candidates = candidates,
             Revision = envelope.Revision,
             ExpiresAt = envelope.ExpiresAt?.ToString("O", CultureInfo.InvariantCulture),
-            OfflineGraceUntil = envelope.OfflineGraceUntil
+            OfflineGraceUntil = envelope.OfflineGraceUntil,
+            CredentialsPending = envelope.CredentialsPending
         };
     }
 
@@ -1010,6 +1011,8 @@ internal sealed class ColituConfigEnvelopeDto
     [JsonPropertyName("server")] public ColituConfigServerDto? Server { get; set; }
     [JsonPropertyName("profile")] public ColituConfigProfileDto? Profile { get; set; }
     [JsonPropertyName("candidates")] public List<ColituConfigCandidateDto>? Candidates { get; set; }
+    /// <summary>This device's credential on the server is new and the node had not confirmed it yet.</summary>
+    [JsonPropertyName("credentials_pending")] public bool CredentialsPending { get; set; }
 }
 
 internal sealed class ColituConfigServerDto

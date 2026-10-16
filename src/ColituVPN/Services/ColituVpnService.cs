@@ -756,15 +756,13 @@ public sealed class ColituVpnService
                     {
                         await StartFirstWorkingProfileAsync(profiles, config, connected, token, serverBudget);
                     }
-                    catch (Exception ex) when (_credentialsRefused && ex is not (OperationCanceledException or ColituSpareServerWins))
+                    catch (Exception ex) when ((_credentialsRefused || config.CredentialsPending) && ex is not (OperationCanceledException or ColituSpareServerWins))
                     {
                         // The panel creates this device's credentials for a server the first time it is
-                        // chosen; the server applies them some seconds later and refuses us until then.
-                        LogConnection("The server refused the credentials (new on this server); retrying in 15 s");
-                        await StopCoreAsync();
-                        await Task.Delay(TimeSpan.FromSeconds(15), token);
-                        _credentialsRefused = false;
-                        await StartFirstWorkingProfileAsync(profiles, config, connected, token, serverBudget);
+                        // chosen and pushes them to the node at once; credentials_pending says the node
+                        // had not confirmed them when the settings were sent. The same server is tried
+                        // again every 2 s until it takes them (a picked server longer than an automatic one).
+                        await RetryWhileCredentialsSettleAsync(profiles, config, connected, token, serverBudget, automatic);
                     }
                     break;
                 }
@@ -1403,6 +1401,10 @@ public sealed class ColituVpnService
     /// <summary>One transport: core start plus traffic check.</summary>
     internal static readonly TimeSpan TransportBudget = TimeSpan.FromSeconds(8);
     internal static readonly TimeSpan PerServerBudget = TimeSpan.FromSeconds(20);
+    /// <summary>How long a server with new, unconfirmed credentials is retried, and how often.</summary>
+    internal static readonly TimeSpan CredentialSettleManual = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan CredentialSettleAutomatic = TimeSpan.FromSeconds(8);
+    internal static readonly TimeSpan CredentialRetryInterval = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan ConnectBudget = TimeSpan.FromSeconds(45);
     /// <summary>No further server is started after this (it would end past <see cref="ConnectBudget"/>).</summary>
     private static readonly TimeSpan NextServerDeadline = ConnectBudget - PerServerBudget;
@@ -3188,6 +3190,33 @@ public sealed class ColituVpnService
     /// <paramref name="serverBudget"/> (automatic mode) no further transport is started once
     /// another one would not fit in it: the next server gets the time instead.
     /// </summary>
+    /// <summary>
+    /// The server does not know this device's new credentials yet (refused by the core, or the
+    /// panel's credentials_pending): it is tried again every <see cref="CredentialRetryInterval"/>
+    /// until it works or the settle window ends; the last failure is rethrown.
+    /// </summary>
+    private async Task RetryWhileCredentialsSettleAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles, ColituVpnConfigResponse config, ColituVpnServer? server, CancellationToken token, TimeSpan? serverBudget, bool automatic)
+    {
+        var window = ColituCredentialSettle.Window(automatic);
+        var settle = Stopwatch.StartNew();
+        for (var attempt = 1; ; attempt++)
+        {
+            LogConnection($"New credentials not on the server yet ({(config.CredentialsPending ? "panel: pending" : "refused by the server")}); retry {attempt} in {CredentialRetryInterval.TotalSeconds:0} s");
+            await StopCoreAsync();
+            await Task.Delay(CredentialRetryInterval, token);
+            _credentialsRefused = false;
+            try
+            {
+                await StartFirstWorkingProfileAsync(profiles, config, server, token, serverBudget);
+                return;
+            }
+            catch (Exception ex) when (ex is not (OperationCanceledException or ColituSpareServerWins)
+                && ColituCredentialSettle.ShouldRetry(settle.Elapsed, window))
+            {
+            }
+        }
+    }
+
     private async Task StartFirstWorkingProfileAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles, ColituVpnConfigResponse config, ColituVpnServer? server, CancellationToken token, TimeSpan? serverBudget = null)
     {
         var observations = new List<ColituProtocolObservation>();
@@ -4356,6 +4385,8 @@ public sealed class ColituVpnConfigResponse
     public string? ExpiresAt { get; set; }
     public DateTimeOffset? OfflineGraceUntil { get; set; }
     public bool Unlimited { get; set; }
+    /// <summary>The panel's credentials_pending: the node had not confirmed this device's new credential yet.</summary>
+    public bool CredentialsPending { get; set; }
 }
 
 public sealed class ColituConnectResponse
@@ -4537,6 +4568,15 @@ public sealed record ColituVpnPreferences(
 }
 
 /// <summary>The warm spare planned for the next core start: which primary profile it backs and with what.</summary>
+/// <summary>Retry window for a server whose new credentials the node has not confirmed yet.</summary>
+internal static class ColituCredentialSettle
+{
+    public static TimeSpan Window(bool automatic) => automatic ? ColituVpnService.CredentialSettleAutomatic : ColituVpnService.CredentialSettleManual;
+
+    /// <summary>Another retry fits when it starts (after the retry interval) inside the window.</summary>
+    public static bool ShouldRetry(TimeSpan elapsed, TimeSpan window) => elapsed + ColituVpnService.CredentialRetryInterval < window;
+}
+
 internal sealed record ColituSparePlan(string PrimaryIndexId, ProfileItem Spare, string Protocol, string? ServerId, string Reason = "", string? NextServerId = null);
 
 /// <summary>Another server's transports for the warm spare (automatic mode).</summary>
