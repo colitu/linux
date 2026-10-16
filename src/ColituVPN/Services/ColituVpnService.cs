@@ -623,6 +623,13 @@ public sealed class ColituVpnService
                 LogConnection(ranked.Count == 0
                     ? "Automatic order: no server list yet; the panel chooses"
                     : $"Automatic order: {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
+                if (ranked.Count > 0)
+                {
+                    // Shadow mode of the Go decision engine: logged only where it would differ.
+                    _ = ColituEngine.Instance.CompareAsync("rank",
+                        ColituEngine.RankRequest(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
+                        new System.Text.Json.Nodes.JsonArray(ranked.Select(item => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(item.Id)).ToArray()));
+                }
             }
             // Servers that carried nothing during this connect: not tried again, and excluded when
             // the panel chooses.

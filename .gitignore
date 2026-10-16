@@ -409,3 +409,6 @@ out/
 
 # Headless client build output
 /headless/dist/
+
+# Adaptive Connect engine sidecar (built in the colitu-csl repo: engine/build.sh)
+engine-dosyalari/

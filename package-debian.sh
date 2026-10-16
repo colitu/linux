@@ -466,6 +466,16 @@ populate_assets_netcore_mode() {
   fi
 
   download_geo_assets "$outroot" || echo "[!] Geo rules download failed (skipped)"
+
+  # Adaptive Connect decision engine (Go sidecar, colitu-csl repo: sh engine/build.sh). Optional:
+  # shadow mode only, the app works the same without it. Taken from engine-dosyalari/<rid>/.
+  local engine_src="$(dirname "$0")/engine-dosyalari/$rid/colitu-engine"
+  if [[ -f "$engine_src" ]]; then
+    install -D -m 755 "$engine_src" "$outroot/bin/colitu-engine/colitu-engine"
+    echo "[+] colitu-engine from $engine_src"
+  else
+    echo "[i] no colitu-engine for $rid (engine-dosyalari/$rid/colitu-engine); skipped"
+  fi
 }
 
 stage_runtime_assets() {
