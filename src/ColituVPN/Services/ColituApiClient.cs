@@ -47,7 +47,8 @@ public sealed class ColituApiClient
             ClientNetwork = response.ClientNetwork?.Trim() is { Length: > 0 and <= 64 } network ? network : null,
             NetworkToken = response.NetworkToken?.Trim() is { Length: > 0 and <= 512 } token ? token : null,
             NetworkHintsBlocked = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.Blocked),
-            NetworkHintsPreferred = ColituNetworkHintsPolicy.ParsePreferred(response.NetworkHints?.Preferred, response.NetworkHints?.Blocked)
+            NetworkHintsPreferred = ColituNetworkHintsPolicy.ParsePreferred(response.NetworkHints?.Preferred, response.NetworkHints?.Blocked),
+            AdaptiveConnect3 = ColituAdaptiveConnect3.ParseFeature(response.Features)
         };
     }
 
@@ -941,6 +942,8 @@ internal sealed class ColituServerListDto
     [JsonPropertyName("network_token")] public string? NetworkToken { get; set; }
     /// <summary>Protocols that fail for most devices on that network; absent when none or too little data.</summary>
     [JsonPropertyName("network_hints")] public ColituNetworkHintsDto? NetworkHints { get; set; }
+    /// <summary>Rollout switches for this device (<c>adaptive_connect_3</c>); absent from an older panel. Values that are not booleans are ignored.</summary>
+    [JsonPropertyName("features")] public Dictionary<string, System.Text.Json.JsonElement>? Features { get; set; }
 }
 
 internal sealed class ColituNetworkHintsDto

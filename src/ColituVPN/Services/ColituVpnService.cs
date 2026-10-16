@@ -340,6 +340,12 @@ public sealed class ColituVpnService
         var country = servers.ClientCountry.NullIfEmpty() ?? _session.ClientCountry;
         var network = ColituAdaptiveConnect.ResolveClientNetwork(servers.ClientNetwork, _session.ClientNetwork);
         var session = _session with { ClientCountry = country, ClientNetwork = network };
+        if (servers.AdaptiveConnect3 is { } ac3)
+        {
+            // Through the VPN too: the switch belongs to the device, not to the network.
+            session = session with { AdaptiveConnect3Remote = ac3 };
+            ColituAdaptiveConnect3.SetRemote(ac3);
+        }
         if (servers.ClientNetwork.IsNotEmpty())
         {
             // Fetched with the VPN off: the token and the hints belong to this network (no hints = none blocked).
@@ -1832,7 +1838,8 @@ public sealed class ColituVpnService
         DeleteRecoverySet();
         // The ping targets are this account's server addresses.
         AppManager.Instance.PingRouteTargets = [];
-        _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null };
+        _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null, AdaptiveConnect3Remote = null };
+        ColituAdaptiveConnect3.SetRemote(false);
         try
         {
             // The imported profiles hold this account's server credentials in plain text
@@ -4025,6 +4032,8 @@ public sealed class ColituVpnService
         {
             _session = new ColituVpnSession { PreferencesMigration = CurrentPreferencesMigration };
         }
+        // The panel's last Adaptive Connect 3.0 switch holds until the next server list.
+        ColituAdaptiveConnect3.SetRemote(_session.AdaptiveConnect3Remote == true);
     }
 
     private void SaveState()
@@ -4128,6 +4137,8 @@ public sealed class ColituServersResponse
     public List<string> NetworkHintsBlocked { get; set; } = [];
     /// <summary>Protocols that worked for most devices on that network, best first (Adaptive Connect 3.0).</summary>
     public List<string> NetworkHintsPreferred { get; set; } = [];
+    /// <summary>The panel's Adaptive Connect 3.0 switch for this device; null when the panel did not send one.</summary>
+    public bool? AdaptiveConnect3 { get; set; }
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
 }
@@ -4490,6 +4501,8 @@ public sealed record ColituVpnSession
     /// <summary>Protocols that worked for most devices on <see cref="NetworkHintsNetwork"/>, best first (stored with the blocked ones).</summary>
     public List<string>? NetworkHintsPreferred { get; init; }
     public string? NetworkHintsNetwork { get; init; }
+    /// <summary>The panel's Adaptive Connect 3.0 switch for this device, kept while the panel cannot be reached.</summary>
+    public bool? AdaptiveConnect3Remote { get; init; }
     /// <summary>Recovery set: the last fetch attempt (at most one per 6 h) and the account it was made for.</summary>
     public DateTimeOffset? RecoveryAttemptAt { get; init; }
     public string? RecoveryAttemptUser { get; init; }

@@ -8,13 +8,32 @@ namespace v2rayN.Desktop.Services;
 /// The release switch of Adaptive Connect 3.0. While <see cref="Enabled"/> is false the hinted
 /// start (network hints <c>preferred</c>) and the whole recovery set (<c>GET /client/recovery</c>,
 /// its store, its use in a connect) are off: nothing is fetched, stored or used, and a connect
-/// behaves like the pre-3.0 code. One constant, flipped when the feature ships; the decision
-/// functions take the flag as a parameter so that both values stay tested.
+/// behaves like the pre-3.0 code. The panel turns it on per device (<c>GET /servers</c>
+/// <c>features.adaptive_connect_3</c>, admin rollout by platform and share of devices); the last
+/// value is kept in the session and holds while the panel cannot be reached. A test build can force
+/// it with <see cref="BuildForced"/>. The decision functions take the flag as a parameter so that
+/// both values stay tested.
 /// </summary>
 internal static class ColituAdaptiveConnect3
 {
-    /// <summary>Hinted start and recovery set. Off for this release.</summary>
-    public const bool Enabled = false;
+    /// <summary>A test build turns Adaptive Connect 3.0 on whatever the panel says.</summary>
+    public const bool BuildForced = false;
+
+    private static volatile bool _remote;
+
+    /// <summary>Hinted start and recovery set: forced by the build or turned on by the panel for this device.</summary>
+    public static bool Enabled => EnabledFor(BuildForced, _remote);
+
+    internal static bool EnabledFor(bool buildForced, bool remote) => buildForced || remote;
+
+    /// <summary>The panel's last word for this device (stored in the session; false when signed out).</summary>
+    internal static void SetRemote(bool on) => _remote = on;
+
+    /// <summary><c>features.adaptive_connect_3</c> of a server list; null when absent (an older panel: keep the stored value).</summary>
+    internal static bool? ParseFeature(IReadOnlyDictionary<string, JsonElement>? features) =>
+        features != null && features.TryGetValue("adaptive_connect_3", out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.ValueKind == JsonValueKind.True
+            : null;
 
     /// <summary>The hinted start may decide the transport order (not when the stall marks are ignored this round).</summary>
     internal static bool HintedStartActive(bool marksIgnored) => HintedStartActive(Enabled, marksIgnored);
