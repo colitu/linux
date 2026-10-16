@@ -30,7 +30,7 @@ public sealed class ColituUpdateService
     public const string PackageInstallDir = "/opt/colitu-vpn";
     private const string PackageName = "colitu-vpn";
 
-    public const string DownloadPageUrl = $"{ColituAuthService.WebBaseUrl}/downloads/linux";
+    public const string DownloadPageUrl = $"{ColituAuthService.WebBaseUrl}/download/linux";
 
     private static string ManifestUrl =>
 #if DEBUG
