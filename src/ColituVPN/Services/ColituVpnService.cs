@@ -540,7 +540,27 @@ public sealed class ColituVpnService
     }
 
     /// <summary>Connects with the saved choice (a specific location or the best server).</summary>
-    public Task ConnectSavedAsync() => ConnectAsync(IsAutoSelection ? null : SelectedServer ?? FindServer(_session.SelectedServerId));
+    public async Task ConnectSavedAsync()
+    {
+        if (!IsAutoSelection && SelectedServer == null && _session.SelectedServerId.IsNotEmpty() && FindServer(_session.SelectedServerId) == null)
+        {
+            // Auto-connect starts before the server list: a saved location is then not known yet,
+            // and connecting "best server" instead would silently take the user elsewhere. The
+            // panel gets a few seconds; only without an answer does the best server stand in.
+            try
+            {
+                await GetServersAsync().WaitAsync(SavedServerLookup);
+            }
+            catch (Exception ex)
+            {
+                LogConnection($"Saved location not known yet and the server list did not come ({ex.GetType().Name}); best server instead");
+            }
+        }
+        await ConnectAsync(IsAutoSelection ? null : SelectedServer ?? FindServer(_session.SelectedServerId));
+    }
+
+    /// <summary>How long a connect waits for the server list to find the saved location.</summary>
+    internal static TimeSpan SavedServerLookup { get; set; } = TimeSpan.FromSeconds(4);
 
     private ColituVpnServer? FindServer(string? id)
     {
