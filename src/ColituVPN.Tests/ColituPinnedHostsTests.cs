@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using AwesomeAssertions;
@@ -89,5 +90,57 @@ public class ColituPinnedHostsTests
 
         using var accepted = await accept;
         accepted.Connected.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Saved_AddressesSurviveARestart()
+    {
+        var host = $"api-{Guid.NewGuid():N}.test";
+        var path = Path.Combine(Path.GetTempPath(), $"pins-{Guid.NewGuid():N}.json");
+        try
+        {
+            ColituPinnedHosts.LoadSaved(path);
+            ColituPinnedHosts.Set(host, [IPAddress.Parse("203.0.113.30")]).Should().BeTrue();
+            File.Exists(path).Should().BeTrue();
+            File.ReadAllText(path).Should().NotContain("dns.google");
+
+            // A new run: the memory is empty, the file is not.
+            ColituPinnedHosts.ResetForTest(host);
+            ColituPinnedHosts.AddressesOf(host).Should().BeEmpty();
+            ColituPinnedHosts.LoadSaved(path);
+
+            ColituPinnedHosts.AddressesOf(host).Should().Equal(IPAddress.Parse("203.0.113.30"));
+        }
+        finally
+        {
+            ColituPinnedHosts.ResetForTest(host);
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Saved_OldFileIsIgnored_AndThisRunsPinsWin()
+    {
+        var stale = $"api-{Guid.NewGuid():N}.test";
+        var current = $"api-{Guid.NewGuid():N}.test";
+        var path = Path.Combine(Path.GetTempPath(), $"pins-{Guid.NewGuid():N}.json");
+        try
+        {
+            ColituPinnedHosts.Set(current, [IPAddress.Parse("203.0.113.40")]);
+            File.WriteAllText(path, $$$"""{"SavedAt":"{{{DateTimeOffset.UtcNow.AddDays(-1):O}}}","Hosts":{"{{{current}}}":["203.0.113.41"]}}""");
+            ColituPinnedHosts.LoadSaved(path);
+            ColituPinnedHosts.AddressesOf(current).Should().Equal(IPAddress.Parse("203.0.113.40"));
+
+            ColituPinnedHosts.ResetForTest();
+            File.WriteAllText(path, $$$"""{"SavedAt":"{{{DateTimeOffset.UtcNow.AddDays(-40):O}}}","Hosts":{"{{{stale}}}":["203.0.113.42"]}}""");
+            ColituPinnedHosts.LoadSaved(path);
+            ColituPinnedHosts.AddressesOf(stale).Should().BeEmpty();
+        }
+        finally
+        {
+            ColituPinnedHosts.ResetForTest(stale);
+            ColituPinnedHosts.ResetForTest(current);
+            File.Delete(path);
+        }
     }
 }

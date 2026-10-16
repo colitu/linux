@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Text.Json;
 
 namespace v2rayN.Desktop.Services;
 
@@ -52,11 +53,116 @@ public static class ColituPinnedHosts
         {
             return false;
         }
+        bool changed;
         lock (Gate)
         {
+            changed = !Pinned.TryGetValue(host, out var old) || !old.SequenceEqual(ordered);
             Pinned[host] = ordered;
         }
+        if (changed)
+        {
+            Save();
+        }
         return true;
+    }
+
+    // ── Saved addresses ─────────────────────────────────────────────────────
+    // While the nftables kill switch is engaged a lookup through a public upstream resolver is
+    // dropped: a restart in that state had no address for the panel (Windows lost about 20 s to
+    // resolver timeouts in the same case). The addresses are not secret, and TLS still checks the host name and pins.
+
+    /// <summary>Saved addresses older than this are not loaded.</summary>
+    internal static readonly TimeSpan SavedMaxAge = TimeSpan.FromDays(30);
+
+    private static string? _storePath;
+
+    /// <summary>
+    /// Loads the addresses saved by an earlier run from <paramref name="path"/> (hosts already
+    /// pinned in this run keep theirs) and saves every later change there. Call once at start-up.
+    /// </summary>
+    public static void LoadSaved(string path)
+    {
+        _storePath = path;
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return;
+            }
+            var saved = JsonSerializer.Deserialize<SavedHosts>(File.ReadAllText(path));
+            if (saved?.Hosts == null || DateTimeOffset.UtcNow - saved.SavedAt > SavedMaxAge)
+            {
+                return;
+            }
+            var loaded = 0;
+            foreach (var (host, list) in saved.Hosts)
+            {
+                var ordered = Order((list ?? []).Select(text => IPAddress.TryParse(text, out var ip) ? ip : null));
+                if (string.IsNullOrWhiteSpace(host) || ordered.Count == 0 || IsBuiltIn(host))
+                {
+                    continue;
+                }
+                lock (Gate)
+                {
+                    if (!Pinned.ContainsKey(host))
+                    {
+                        Pinned[host] = ordered;
+                        loaded++;
+                    }
+                }
+            }
+            Logging.SaveLog($"ColituPinnedHosts | {loaded} saved host address list(s) loaded");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            Logging.SaveLog($"ColituPinnedHosts | saved addresses unreadable: {ex.GetType().Name}");
+        }
+    }
+
+    private static void Save()
+    {
+        var path = _storePath;
+        if (path == null)
+        {
+            return;
+        }
+        try
+        {
+            Dictionary<string, List<string>> hosts;
+            lock (Gate)
+            {
+                hosts = Pinned.Where(item => !IsBuiltIn(item.Key))
+                    .ToDictionary(item => item.Key, item => item.Value.Select(ip => ip.ToString()).ToList(), StringComparer.OrdinalIgnoreCase);
+            }
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new SavedHosts { SavedAt = DateTimeOffset.UtcNow, Hosts = hosts }));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logging.SaveLog($"ColituPinnedHosts | addresses not saved: {ex.GetType().Name}");
+        }
+    }
+
+    /// <summary>Tests only: forgets the store and every pin of <paramref name="host"/>.</summary>
+    internal static void ResetForTest(string? host = null)
+    {
+        _storePath = null;
+        if (host != null)
+        {
+            lock (Gate)
+            {
+                Pinned.Remove(host);
+            }
+        }
+    }
+
+    private static bool IsBuiltIn(string host) => host is "cloudflare-dns.com" or "dns.google";
+
+    private sealed class SavedHosts
+    {
+        public DateTimeOffset SavedAt { get; set; }
+        public Dictionary<string, List<string>>? Hosts { get; set; }
     }
 
     /// <summary>Tests only: pins addresses as given (loopback included).</summary>
@@ -106,48 +212,47 @@ public static class ColituPinnedHosts
     /// addresses) and keeps the result. Call it before the kill switch is armed; while it is armed
     /// the system resolver is blocked and the last good addresses are kept.
     /// </summary>
-    public static async Task RefreshAsync(IEnumerable<string?> hosts, CancellationToken token = default)
+    public static Task RefreshAsync(IEnumerable<string?> hosts, CancellationToken token = default) =>
+        // All at once: one after the other, a blocked resolver cost 4 s per host (12 s for three).
+        Task.WhenAll(hosts.Where(item => !string.IsNullOrWhiteSpace(item) && !IPAddress.TryParse(item, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(host => RefreshOneAsync(host, token)));
+
+    private static async Task RefreshOneAsync(string host, CancellationToken token)
     {
-        foreach (var host in hosts.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase))
+        try
         {
-            if (IPAddress.TryParse(host, out _))
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+            budget.CancelAfter(ResolveBudget);
+            var system = ResolveViaSystemAsync(host, budget.Token);
+            var doh = await ColituNetwork.ResolveServerAsync(host, budget.Token);
+            if (doh != null)
             {
-                continue;
+                // DoH answered: the system resolver gets a moment more for the other addresses.
+                await Task.WhenAny(system, Task.Delay(SystemGraceAfterDoh, budget.Token));
             }
-            try
+            else
             {
-                using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-                budget.CancelAfter(ResolveBudget);
-                var system = ResolveViaSystemAsync(host!, budget.Token);
-                var doh = await ColituNetwork.ResolveServerAsync(host!, budget.Token);
-                if (doh != null)
-                {
-                    // DoH answered: the system resolver gets a moment more for the other addresses.
-                    await Task.WhenAny(system, Task.Delay(SystemGraceAfterDoh, budget.Token));
-                }
-                else
-                {
-                    await Task.WhenAny(system, Task.Delay(System.Threading.Timeout.Infinite, budget.Token));
-                }
-                var others = system.IsCompletedSuccessfully ? system.Result : [];
-                budget.Cancel();
-                if (Set(host!, [doh, .. others]))
-                {
-                    Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} pinned to {ColituLogPrivacy.ForLog(AddressesOf(host))}");
-                }
-                else
-                {
-                    Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} could not be resolved; keeping {(AddressesOf(host).Count > 0 ? ColituLogPrivacy.ForLog(AddressesOf(host)) : "no addresses")}");
-                }
+                await Task.WhenAny(system, Task.Delay(System.Threading.Timeout.Infinite, budget.Token));
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            var others = system.IsCompletedSuccessfully ? system.Result : [];
+            budget.Cancel();
+            if (Set(host, [doh, .. others]))
             {
-                throw;
+                Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} pinned to {ColituLogPrivacy.ForLog(AddressesOf(host))}");
             }
-            catch (Exception ex)
+            else
             {
-                Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)}: {ex.GetType().Name}");
+                Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)} could not be resolved; keeping {(AddressesOf(host).Count > 0 ? ColituLogPrivacy.ForLog(AddressesOf(host)) : "no addresses")}");
             }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituPinnedHosts | {ColituLogPrivacy.ForLog(host)}: {ex.GetType().Name}");
         }
     }
 

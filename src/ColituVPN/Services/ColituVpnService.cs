@@ -1689,6 +1689,8 @@ public sealed class ColituVpnService
     /// </summary>
     public async Task RecoverFromPreviousRunAsync()
     {
+        // The panel's last good addresses (the kill switch drops lookups through public resolvers).
+        ColituPinnedHosts.LoadSaved(Utils.GetConfigPath("colitu-pinned-hosts.json"));
         try
         {
             // Kill switch rules outlive a crash on purpose (fail closed). Take them over:
