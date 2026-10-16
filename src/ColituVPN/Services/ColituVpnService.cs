@@ -617,19 +617,20 @@ public sealed class ColituVpnService
                 killSwitchEngagedHere = await EngageKillSwitchAsync("TUN connecting") && !wasEngaged;
             }
             var ranked = automatic ? RankedServers() : [];
+            var orderSource = "app";
+            if (automatic && ranked.Count > 1)
+            {
+                // The Go decision engine orders the candidates; the app's own order is the fallback.
+                (ranked, orderSource) = await ColituEngine.Instance.DecideOrderAsync("rank",
+                    ColituEngine.RankRequest(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
+                    ranked, item => item.Id);
+            }
             if (automatic)
             {
                 EmitChoiceEvent(ranked);
                 LogConnection(ranked.Count == 0
                     ? "Automatic order: no server list yet; the panel chooses"
-                    : $"Automatic order: {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
-                if (ranked.Count > 0)
-                {
-                    // Shadow mode of the Go decision engine: logged only where it would differ.
-                    _ = ColituEngine.Instance.CompareAsync("rank",
-                        ColituEngine.RankRequest(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
-                        new System.Text.Json.Nodes.JsonArray(ranked.Select(item => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(item.Id)).ToArray()));
-                }
+                    : $"Automatic order ({orderSource}): {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
             }
             // Servers that carried nothing during this connect: not tried again, and excluded when
             // the panel chooses.

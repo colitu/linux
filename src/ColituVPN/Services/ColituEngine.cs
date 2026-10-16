@@ -8,10 +8,10 @@ namespace v2rayN.Desktop.Services;
 /// <summary>
 /// The Adaptive Connect decision engine (Go, colitu-csl repo engine/) as a sidecar process:
 /// <c>bin/colitu-engine/colitu-engine</c>, one JSON request per line on its stdin, one answer per
-/// line on its stdout. It needs no network and keeps no state. Shadow mode for now: the app still
-/// decides with its own code (same rules, shared test vectors) and logs where the engine would
-/// have decided otherwise. Any failure (missing file, crash, slow answer) only turns the engine off
-/// for a while; nothing waits on it.
+/// line on its stdout. It needs no network and keeps no state. The engine decides the automatic
+/// server order (<see cref="DecideOrderAsync{T}"/>); the app's own code (same rules, shared test
+/// vectors) is the fallback whenever the engine is missing, slow, failing or answers with a set
+/// of servers other than the app's candidates. Any failure only turns the engine off for a while.
 /// </summary>
 internal sealed class ColituEngine : IDisposable
 {
@@ -37,6 +37,64 @@ internal sealed class ColituEngine : IDisposable
 
     /// <summary>Mismatches logged in this run (each kind of decision is logged a few times at most).</summary>
     public int Mismatches => _mismatches;
+
+    /// <summary>How long a connect waits for the engine's order before it uses the app's own.</summary>
+    internal static TimeSpan DecisionBudget { get; set; } = TimeSpan.FromMilliseconds(800);
+
+    /// <summary>
+    /// The engine's order of <paramref name="app"/> for <paramref name="op"/> (an array of ids): used
+    /// only when it holds exactly the app's candidates (same ids, no more, no fewer, no repeats), so
+    /// the engine can reorder but never add a server the app left out (Russia, penalised, hidden) or
+    /// drop one. Otherwise, or when no answer comes within <see cref="DecisionBudget"/>, the app's
+    /// own order. <paramref name="source"/> says which one was used.
+    /// </summary>
+    public async Task<(List<T> Order, string Source)> DecideOrderAsync<T>(string op, JsonNode input, List<T> app, Func<T, string?> id)
+    {
+        if (app.Count < 2)
+        {
+            return (app, "app");
+        }
+        var call = CallAsync(op, input);
+        if (await Task.WhenAny(call, Task.Delay(DecisionBudget)) != call)
+        {
+            return (app, "app (engine slow)");
+        }
+        if (await call is not JsonArray answer)
+        {
+            return (app, "app (engine unavailable)");
+        }
+        var byId = new Dictionary<string, T>(StringComparer.Ordinal);
+        foreach (var item in app)
+        {
+            if (id(item) is not { Length: > 0 } key || !byId.TryAdd(key, item))
+            {
+                return (app, "app");
+            }
+        }
+        var order = new List<T>(app.Count);
+        foreach (var node in answer)
+        {
+            if (node?.GetValueKind() != JsonValueKind.String || !byId.Remove(node.GetValue<string>(), out var item))
+            {
+                return (app, MismatchSource(op, app.Select(id), answer));
+            }
+            order.Add(item);
+        }
+        if (byId.Count > 0)
+        {
+            return (app, MismatchSource(op, app.Select(id), answer));
+        }
+        return (order, "engine");
+    }
+
+    private string MismatchSource(string op, IEnumerable<string?> app, JsonArray engine)
+    {
+        if (Interlocked.Increment(ref _mismatches) <= 20)
+        {
+            Logging.SaveLog($"ColituEngine | {op}: engine answered other servers than the app's candidates (app {string.Join(",", app)}, engine {engine.ToJsonString()}); app order used");
+        }
+        return "app (engine set differs)";
+    }
 
     /// <summary>
     /// Sends <paramref name="op"/> with <paramref name="input"/> and returns the engine's <c>out</c>;
