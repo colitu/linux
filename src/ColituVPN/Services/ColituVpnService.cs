@@ -2408,7 +2408,11 @@ public sealed class ColituVpnService
     internal static bool ShouldSwitchTransport(DateTimeOffset? lastSwitch, DateTimeOffset now) =>
         lastSwitch == null || now - lastSwitch.Value >= TransportSwitchMinInterval;
 
-    /// <summary>A Russian and two foreign addresses that accept TCP on 443 (the kill switch lets the last two through: <see cref="EngageKillSwitchAsync"/>).</summary>
+    /// <summary>
+    /// A Russian and two foreign addresses that accept TCP on 443. While the kill switch blocks, only
+    /// 8.8.8.8 answers (the app may reach it on TCP 443 as a DoH resolver: <see cref="EngageKillSwitchAsync"/>);
+    /// 208.67.222.222 is no longer let through, so a browser cannot use it either.
+    /// </summary>
     private static readonly IPAddress[] DirectReferences = [IPAddress.Parse("77.88.8.8"), IPAddress.Parse("208.67.222.222"), IPAddress.Parse("8.8.8.8")]; // no Cloudflare: throttled in Russia
 
     /// <summary>
@@ -2794,28 +2798,31 @@ public sealed class ColituVpnService
         try
         {
             // Re-applied on every engage so a new server or a moved panel address is let through.
-            var allowed = new List<IPAddress>(ColituNetwork.KnownAddresses());
             // The panel is dialled by its pinned addresses (the rules drop DNS to public upstream
             // resolvers); refreshed here, the last good ones stay when the lookup fails.
             // Every API base and list URL of the signed endpoint list: failover must never hit the kill switch.
-            var apiHosts = ColituAuthService.Instance.PinnedUrls()
-                .Select(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null)
-                .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var apiUris = ColituAuthService.Instance.PinnedUrls()
+                .Select(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri : null)
+                .OfType<Uri>().ToList();
+            var apiHosts = apiUris.Select(uri => uri.Host).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             await ColituPinnedHosts.RefreshAsync(apiHosts);
-            foreach (var host in apiHosts.Concat(ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host)))
+            var api = await PinnedAndResolvedAsync(apiHosts);
+            // The app's DoH resolvers (ColituNetwork, pinned) and the cores' direct/bootstrap DNS
+            // (EnsureCoreReadyAsync). 8.8.8.8 also serves as the foreign reference of the offline
+            // check (DirectReferences), which needs TCP 443 only.
+            var dohHosts = ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host).ToList();
+            var resolvers = await PinnedAndResolvedAsync(dohHosts);
+            resolvers.AddRange(new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4" }.Select(IPAddress.Parse));
+            var allowed = new ColituKillSwitch.Allowance
             {
-                allowed.AddRange(ColituPinnedHosts.AddressesOf(host));
-                if (await ColituNetwork.ResolveServerAsync(host) is { } address)
-                {
-                    allowed.Add(address);
-                }
-            }
-            allowed.AddRange(new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4" }.Select(IPAddress.Parse));
-            // The foreign direct-reachability references (DirectReferences): the kill switch is armed
-            // before a connect, so its offline check must still reach them.
-            allowed.AddRange(DirectReferences.Skip(1));
+                // Everything else resolved so far: the VPN servers and their latency probe hosts.
+                Servers = ColituNetwork.KnownAddresses(apiHosts.Concat(dohHosts)),
+                Api = api,
+                ApiPorts = apiUris.Select(uri => uri.Port).Distinct().ToList(),
+                Resolvers = resolvers
+            };
             await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
-            LogConnection($"Kill switch engaged ({reason}), {allowed.Distinct().Count()} addresses allowed");
+            LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver addresses allowed");
             return true;
         }
         catch (Exception ex)
@@ -2824,6 +2831,21 @@ public sealed class ColituVpnService
             Notice?.Invoke("err.killSwitch");
             return false;
         }
+    }
+
+    /// <summary>The pinned addresses of <paramref name="hosts"/> plus a fresh lookup of each.</summary>
+    private static async Task<List<IPAddress>> PinnedAndResolvedAsync(IEnumerable<string> hosts)
+    {
+        var addresses = new List<IPAddress>();
+        foreach (var host in hosts)
+        {
+            addresses.AddRange(ColituPinnedHosts.AddressesOf(host));
+            if (await ColituNetwork.ResolveServerAsync(host) is { } address)
+            {
+                addresses.Add(address);
+            }
+        }
+        return addresses;
     }
 
     /// <summary>False when the rules are still in place (no sudo password yet, or nft failed).</summary>

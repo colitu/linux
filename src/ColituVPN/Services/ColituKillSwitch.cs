@@ -8,8 +8,9 @@ namespace v2rayN.Desktop.Services;
 /// <summary>
 /// Linux kill switch on nftables. While engaged, an output chain with a drop
 /// policy lets through only loopback, Colitu's TUN interfaces, the local
-/// network and DHCP, the VPN servers and the Colitu API (so the tunnel can come
-/// back), and nothing else. The rules are installed with the sudo password the
+/// network and DHCP, the VPN servers, the Colitu API and the public resolvers (so
+/// the tunnel can come back), each only for the user, protocol and ports that need
+/// it (<see cref="Allowance"/>), and nothing else. The rules are installed with the sudo password the
 /// TUN mode already asked for.
 ///
 /// The switch fails closed: the rules stay in place when the app dies (crash,
@@ -49,7 +50,7 @@ public sealed class ColituKillSwitch
     /// addresses the user sends around the VPN; they stay reachable while it is down too.
     /// Throws when sudo refuses or nft fails.
     /// </summary>
-    public async Task EngageAsync(IEnumerable<IPAddress> allowed, IEnumerable<string>? bypassNetworks = null, bool allowLan = true)
+    public async Task EngageAsync(Allowance allowed, IEnumerable<string>? bypassNetworks = null, bool allowLan = true)
     {
         var password = AppManager.Instance.LinuxSudoPwd;
         if (password.IsNullOrEmpty())
@@ -117,16 +118,57 @@ public sealed class ColituKillSwitch
     internal static readonly string[] LinkLocal4 = ["169.254.0.0/16", "224.0.0.0/4", "255.255.255.255"];
     internal static readonly string[] LinkLocal6 = ["fe80::/10", "ff00::/8"];
 
-    /// <param name="allowed">The control plane: VPN servers, the panel API, the DoH resolvers.</param>
+    /// <summary>
+    /// The control plane the kill switch lets through outside the tunnel, split by who needs it
+    /// and how, so each group gets only its own owner, protocol and ports. Every program of the
+    /// logged-in user shares the app's uid, so anything open to that uid is open to a browser too.
+    /// </summary>
+    public sealed class Allowance
+    {
+        /// <summary>
+        /// VPN servers (entry nodes, latency probe hosts). The cores (root, started through
+        /// colitu-core-root) dial them on any port and protocol; the app only opens TCP connections
+        /// to them (latency and transport probes on the servers' own ports).
+        /// </summary>
+        public IReadOnlyCollection<IPAddress> Servers { get; init; } = [];
+
+        /// <summary>The panel API, mirror and endpoint-list hosts: only the app calls them, HTTPS on <see cref="ApiPorts"/>.</summary>
+        public IReadOnlyCollection<IPAddress> Api { get; init; } = [];
+
+        /// <summary>The TCP ports of the API URLs (443 unless a URL names another).</summary>
+        public IReadOnlyCollection<int> ApiPorts { get; init; } = [443];
+
+        /// <summary>
+        /// Public resolvers. The cores' own lookups (bootstrap/direct DNS, DoH, DoT) are root only
+        /// on 53, 443 and 853; the app reaches them only for DNS-over-HTTPS (TCP 443).
+        /// </summary>
+        public IReadOnlyCollection<IPAddress> Resolvers { get; init; } = [];
+    }
+
+    /// <summary>The cores' DNS ports: plain DNS, DNS-over-HTTPS, DNS-over-TLS.</summary>
+    internal const string CoreResolverTcpPorts = "{ 53, 443, 853 }";
+
+    /// <summary>Older form: every address is treated as a VPN server.</summary>
+    internal static string BuildEngageScript(IEnumerable<IPAddress> servers, int appPid, IEnumerable<string>? bypassNetworks = null, bool allowLan = true, uint? appUid = null) =>
+        BuildEngageScript(new Allowance { Servers = servers.ToList() }, appPid, bypassNetworks, allowLan, appUid);
+
+    /// <param name="allowed">The control plane: VPN servers, the panel API, the public resolvers.</param>
     /// <param name="appUid">
-    /// Only processes of this user (the app) and root (the cores) may reach <paramref name="allowed"/>;
-    /// null lets every process through (older behaviour, kept for callers without a uid).
+    /// The app's user. Root (the cores) and this uid get only what <see cref="Allowance"/> says they
+    /// need; null drops the uid match for the app's share (kept for callers without a uid).
     /// </param>
     /// <param name="allowLan">The local network (printers, NAS, the router page); off keeps only link-local, multicast and DHCP.</param>
-    internal static string BuildEngageScript(IEnumerable<IPAddress> allowed, int appPid, IEnumerable<string>? bypassNetworks = null, bool allowLan = true, uint? appUid = null)
+    internal static string BuildEngageScript(Allowance allowed, int appPid, IEnumerable<string>? bypassNetworks = null, bool allowLan = true, uint? appUid = null)
     {
-        var v4 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetwork).Select(a => a.ToString()).Distinct().ToList();
-        var v6 = allowed.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6 && !a.IsIPv6LinkLocal).Select(a => a.ToString()).Distinct().ToList();
+        var resolvers = Normalize(allowed.Resolvers);
+        // A server name that resolves to a public resolver (a tampered list) must not widen the resolver rules.
+        var servers = Normalize(allowed.Servers).Where(address => !resolvers.Contains(address)).ToList();
+        var api = Normalize(allowed.Api);
+        var apiPorts = allowed.ApiPorts.Where(port => port is > 0 and <= 65535).Distinct().Order().ToList();
+        if (apiPorts.Count == 0)
+        {
+            apiPorts.Add(443);
+        }
         // Only well-formed networks reach root's nft (the list is user input); the parsed form is written.
         var bypass4 = new List<string>();
         var bypass6 = new List<string>();
@@ -160,15 +202,32 @@ public sealed class ColituKillSwitch
         // DHCP by its client ports (only root can bind them), never "any program to port 67/547".
         rules.Append("    udp sport 68 udp dport 67 accept").Append('\n');
         rules.Append("    meta nfproto ipv6 udp sport 546 udp dport 547 accept").Append('\n');
-        var owner = appUid is { } uid ? $"meta skuid {{ 0, {uid} }} " : "";
-        if (v4.Count > 0)
+        const string root = "meta skuid 0 ";
+        var app = appUid is { } uid ? $"meta skuid {uid} " : "";
+        // VPN servers: the cores on anything, the app only TCP (its probes). Without a uid the
+        // older unrestricted rule stays.
+        if (appUid is null)
         {
-            rules.Append($"    {owner}ip daddr {{ {string.Join(", ", v4)} }} accept").Append('\n');
+            AppendAddressRule(rules, "", servers, "");
         }
-        if (v6.Count > 0)
+        else
         {
-            rules.Append($"    {owner}ip6 daddr {{ {string.Join(", ", v6)} }} accept").Append('\n');
+            AppendAddressRule(rules, root, servers, "");
+            AppendAddressRule(rules, app + "meta l4proto tcp ", servers, "");
         }
+        // The panel API: only the app, only HTTPS on the ports its URLs use. (An API host behind a
+        // CDN shares its address with other sites on the same port; that much stays open to the user.)
+        AppendAddressRule(rules, app, api, $" tcp dport {PortMatch(apiPorts)}");
+        // Public resolvers: the cores' own lookups (root only), DNS / DoH / DoT.
+        AppendAddressRule(rules, root, resolvers, " udp dport 53");
+        AppendAddressRule(rules, root, resolvers, $" tcp dport {CoreResolverTcpPorts}");
+        // Residual risk: the app resolves server and API names over DNS-over-HTTPS (ColituNetwork,
+        // pinned addresses) while the tunnel is down, and the panel offers no resolver of its own to
+        // go through instead. The rule is limited to the app's uid and TCP 443 on these few resolver
+        // addresses, but every program of that user shares the uid: a browser's own DoH to these
+        // resolvers can still leave outside the tunnel (the resolver sees the real IP and the names
+        // asked). Plain DNS, DoT, QUIC and every other port and address stay blocked.
+        AppendAddressRule(rules, app, resolvers, " tcp dport 443");
         // Networks the user excluded from the VPN: every program reaches them directly.
         if (bypass4.Count > 0)
         {
@@ -200,6 +259,32 @@ public sealed class ColituKillSwitch
             exit 0
             """;
     }
+
+    /// <summary>Distinct, IPv4-mapped addresses as IPv4, IPv6 link-local left out (fe80::/10 is allowed already).</summary>
+    private static List<IPAddress> Normalize(IEnumerable<IPAddress> addresses) => addresses
+        .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+        .Where(address => address.AddressFamily == AddressFamily.InterNetwork
+            || (address.AddressFamily == AddressFamily.InterNetworkV6 && !address.IsIPv6LinkLocal))
+        .Distinct()
+        .ToList();
+
+    /// <summary>One rule per address family: "&lt;owner&gt;ip daddr { … }&lt;match&gt; accept"; nothing for an empty list.</summary>
+    private static void AppendAddressRule(StringBuilder rules, string owner, IReadOnlyCollection<IPAddress> addresses, string match)
+    {
+        var v4 = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork).Select(a => a.ToString()).ToList();
+        var v6 = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6).Select(a => a.ToString()).ToList();
+        if (v4.Count > 0)
+        {
+            rules.Append($"    {owner}ip daddr {{ {string.Join(", ", v4)} }}{match} accept").Append('\n');
+        }
+        if (v6.Count > 0)
+        {
+            rules.Append($"    {owner}ip6 daddr {{ {string.Join(", ", v6)} }}{match} accept").Append('\n');
+        }
+    }
+
+    private static string PortMatch(IReadOnlyList<int> ports) =>
+        ports.Count == 1 ? ports[0].ToString(CultureInfo.InvariantCulture) : $"{{ {string.Join(", ", ports)} }}";
 
     /// <summary>Root shell script that removes the rules, the marker and an old watcher. Safe when none exist.</summary>
     internal static readonly string ReleaseScript =

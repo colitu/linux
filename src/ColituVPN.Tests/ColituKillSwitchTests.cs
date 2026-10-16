@@ -109,6 +109,78 @@ public class ColituKillSwitchTests
         script.Should().NotContain("ip daddr { } accept");
     }
 
+    private static ColituKillSwitch.Allowance Split() => new()
+    {
+        Servers = [IPAddress.Parse("203.0.113.7"), IPAddress.Parse("1.1.1.1")],
+        Api = [IPAddress.Parse("198.51.100.20"), IPAddress.Parse("2001:db8::20")],
+        ApiPorts = [443, 443, 0, 70000],
+        Resolvers = [IPAddress.Parse("1.1.1.1"), IPAddress.Parse("8.8.8.8"), IPAddress.Parse("2606:4700:4700::1111")]
+    };
+
+    [Fact]
+    public void Split_ApiOnlyForTheAppOverHttps()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(Split(), 1, appUid: 1000);
+        script.Should().Contain("    meta skuid 1000 ip daddr { 198.51.100.20 } tcp dport 443 accept");
+        script.Should().Contain("    meta skuid 1000 ip6 daddr { 2001:db8::20 } tcp dport 443 accept");
+        script.Should().NotContain("meta skuid 0 ip daddr { 198.51.100.20 }", "the cores never call the panel");
+        script.Should().NotContain("70000").And.NotContain("dport 0");
+    }
+
+    [Fact]
+    public void Split_ApiPortsComeFromTheUrls()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(new ColituKillSwitch.Allowance
+        {
+            Api = [IPAddress.Parse("198.51.100.20")],
+            ApiPorts = [8443, 443]
+        }, 1, appUid: 1000);
+        script.Should().Contain("meta skuid 1000 ip daddr { 198.51.100.20 } tcp dport { 443, 8443 } accept");
+    }
+
+    [Fact]
+    public void Split_ResolversForTheCoresOnDnsPorts_AndForTheAppOnlyDoh()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(Split(), 1, appUid: 1000);
+        script.Should().Contain("    meta skuid 0 ip daddr { 1.1.1.1, 8.8.8.8 } udp dport 53 accept");
+        script.Should().Contain("    meta skuid 0 ip daddr { 1.1.1.1, 8.8.8.8 } tcp dport { 53, 443, 853 } accept");
+        script.Should().Contain("    meta skuid 0 ip6 daddr { 2606:4700:4700::1111 } tcp dport { 53, 443, 853 } accept");
+        script.Should().Contain("    meta skuid 1000 ip daddr { 1.1.1.1, 8.8.8.8 } tcp dport 443 accept");
+        script.Should().Contain("    meta skuid 1000 ip6 daddr { 2606:4700:4700::1111 } tcp dport 443 accept");
+        // No rule opens a resolver to the user's programs without a port and protocol.
+        script.Should().NotContain("8.8.8.8 } accept").And.NotContain("1.1.1.1 } accept");
+        script.Should().NotContain("208.67.222.222");
+    }
+
+    [Fact]
+    public void Split_ServerListCannotWidenTheResolverRules()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(Split(), 1, appUid: 1000);
+        script.Should().Contain("    meta skuid 0 ip daddr { 203.0.113.7 } accept");
+        script.Should().Contain("    meta skuid 1000 meta l4proto tcp ip daddr { 203.0.113.7 } accept");
+        script.Should().NotContain("203.0.113.7, 1.1.1.1");
+    }
+
+    [Fact]
+    public void Split_WithoutAUid_KeepsThePortLimits()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(Split(), 1);
+        script.Should().Contain("    ip daddr { 203.0.113.7 } accept");
+        script.Should().Contain("    ip daddr { 198.51.100.20 } tcp dport 443 accept");
+        script.Should().Contain("    ip daddr { 1.1.1.1, 8.8.8.8 } tcp dport 443 accept");
+        script.Should().Contain("    meta skuid 0 ip daddr { 1.1.1.1, 8.8.8.8 } udp dport 53 accept");
+    }
+
+    [Fact]
+    public void Split_KeepsDnsDropLanDhcpAndBypassUnchanged()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(Split(), 1, ["192.0.2.0/24"], appUid: 1000);
+        script.Should().Contain("meta skuid != 0 udp dport 53 drop").And.Contain("meta skuid != 0 tcp dport 53 drop");
+        script.Should().Contain("192.168.0.0/16").And.Contain("udp sport 68 udp dport 67 accept");
+        script.Should().Contain("    ip daddr { 192.0.2.0/24 } accept");
+        script.Should().NotContain("\r");
+    }
+
     [Fact]
     public void LeftoverRules_AreNeverReportedOutsideLinux()
     {

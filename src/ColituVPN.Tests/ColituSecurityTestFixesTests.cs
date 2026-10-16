@@ -45,8 +45,12 @@ public class ColituSecurityTestFixesTests
     public void KillSwitch_ControlPlaneOnlyForTheAppsUserAndRoot()
     {
         var script = ColituKillSwitch.BuildEngageScript([IPAddress.Parse("203.0.113.7"), IPAddress.Parse("2001:db8::5")], 1, ["198.51.100.0/24"], appUid: 1000);
-        script.Should().Contain("meta skuid { 0, 1000 } ip daddr { 203.0.113.7 } accept");
-        script.Should().Contain("meta skuid { 0, 1000 } ip6 daddr { 2001:db8::5 } accept");
+        // VPN servers: the cores (root) on anything, the app only over TCP (its probes).
+        script.Should().Contain("meta skuid 0 ip daddr { 203.0.113.7 } accept");
+        script.Should().Contain("meta skuid 0 ip6 daddr { 2001:db8::5 } accept");
+        script.Should().Contain("meta skuid 1000 meta l4proto tcp ip daddr { 203.0.113.7 } accept");
+        script.Should().Contain("meta skuid 1000 meta l4proto tcp ip6 daddr { 2001:db8::5 } accept");
+        script.Should().NotContain("meta skuid { 0, 1000 }");
         // Networks the user excluded from the VPN stay open to every program.
         script.Should().Contain("    ip daddr { 198.51.100.0/24 } accept");
     }

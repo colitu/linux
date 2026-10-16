@@ -76,6 +76,19 @@ public static class ColituNetwork
         }
     }
 
+    /// <summary>
+    /// The addresses resolved so far for every name except <paramref name="exceptHosts"/> (the panel
+    /// and the DoH resolvers): the VPN servers, which the kill switch treats apart from those.
+    /// </summary>
+    internal static IReadOnlyList<IPAddress> KnownAddresses(IEnumerable<string> exceptHosts)
+    {
+        var except = new HashSet<string>(exceptHosts, StringComparer.OrdinalIgnoreCase);
+        lock (CacheGate)
+        {
+            return ResolveCache.Where(item => !except.Contains(item.Key)).Select(item => item.Value.Address).Distinct().ToList();
+        }
+    }
+
     private static HttpClient CreateDohClient() => new(new SocketsHttpHandler
     {
         UseProxy = false,
