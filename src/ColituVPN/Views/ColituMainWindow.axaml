@@ -1870,6 +1870,12 @@
                                                         Margin="0,3,0,0"
                                                         Classes="small"
                                                         TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock
+                                                        x:Name="AccountCompany"
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        IsVisible="False"
+                                                        TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
                                             </Grid>
                                             <Border

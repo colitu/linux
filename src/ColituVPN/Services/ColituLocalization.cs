@@ -280,6 +280,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["account.kicker"] = ["АККАУНТ", "HESAP", "ACCOUNT"],
         ["account.title"] = ["Ваш аккаунт", "Hesabınız", "Your account"],
         ["account.email"] = ["Электронная почта", "E-posta", "Email"],
+        ["account.company"] = ["Компания: {name}", "Şirket: {name}", "Company: {name}"],
         ["account.plan"] = ["Тариф", "Paket", "Plan"],
         ["account.validUntil"] = ["Действует до", "Geçerlilik", "Valid until"],
         ["account.devices"] = ["УСТРОЙСТВА", "CİHAZLAR", "DEVICES"],
