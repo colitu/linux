@@ -345,4 +345,34 @@ public class ColituAdaptiveConnect2Tests
     [InlineData(true, true, false, false)]
     public void DeadServer_LeftOnlyInAutomaticModeWhenBothPathsDied(bool automatic, bool internetDirect, bool bothPathsDead, bool leave) =>
         ColituVpnService.ShouldLeaveServerAfterRestart(automatic, internetDirect, bothPathsDead).Should().Be(leave);
+
+    // A server outage (2026-10-22 Windows test PC: every port of the server blocked for 40 s) marked
+    // each transport it tried; once the outage ended the round landed on the worst one, which then got
+    // the only good mark and kept the others last for 6 h.
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void Transport_MarkedAfterRestart_OnlyWhenItDiedAlone(bool internetDirect, bool bothPathsDead, bool mark) =>
+        ColituVpnService.MarkTransportAfterRestart(internetDirect, bothPathsDead).Should().Be(mark);
+
+    [Fact]
+    public void ServerOutage_EveryTcpTransportSilent()
+    {
+        ColituTransportOrder.ServerOutage(new Dictionary<string, int> { ["vless-reality"] = -1, ["trojan"] = -1, ["shadowsocks"] = -1 }).Should().BeTrue();
+        ColituTransportOrder.ServerOutage(new Dictionary<string, int> { ["vless-reality"] = -1, ["trojan"] = 62 }).Should().BeFalse();
+        // Nothing measured (a Hysteria2-only server, or the hinted start without a probe): no verdict.
+        ColituTransportOrder.ServerOutage(new Dictionary<string, int>()).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ServerOutage_SkipsSilentTransports_ButNeverEmptiesTheRound()
+    {
+        var latency = new Dictionary<string, int> { ["vless-reality"] = -1, ["trojan"] = -1 };
+        ColituTransportOrder.WithoutSilent(["hysteria2", "vless-reality", "trojan"], item => item, latency).Should().Equal("hysteria2");
+        // Only silent TCP transports offered: the round still tries them.
+        ColituTransportOrder.WithoutSilent(["vless-reality", "trojan"], item => item, latency).Should().Equal("vless-reality", "trojan");
+        ColituTransportOrder.WithoutSilent(["hysteria2", "shadowsocks"], item => item, new Dictionary<string, int> { ["shadowsocks"] = 61 }).Should().Equal("hysteria2", "shadowsocks");
+    }
 }
