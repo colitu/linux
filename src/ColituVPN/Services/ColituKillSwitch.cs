@@ -8,7 +8,8 @@ namespace v2rayN.Desktop.Services;
 /// <summary>
 /// Linux kill switch on nftables. While engaged, an output chain with a drop
 /// policy lets through only loopback, Colitu's TUN interfaces, the local
-/// network and DHCP, the VPN servers, the Colitu API and the public resolvers (so
+/// network and DHCP, the VPN servers, the Colitu API, the public resolvers and the
+/// physical interface's DNS servers (app only, UDP 53) (so
 /// the tunnel can come back), each only for the user, protocol and ports that need
 /// it (<see cref="Allowance"/>), and nothing else. The rules are installed with the sudo password the
 /// TUN mode already asked for.
@@ -143,6 +144,12 @@ public sealed class ColituKillSwitch
         /// on 53, 443 and 853; the app reaches them only for DNS-over-HTTPS (TCP 443).
         /// </summary>
         public IReadOnlyCollection<IPAddress> Resolvers { get; init; } = [];
+
+        /// <summary>
+        /// The physical interface's own DNS servers (<see cref="ColituNetwork.AdapterDnsServers"/>):
+        /// only the app, only UDP 53, for server names when both DoH services are blocked (China).
+        /// </summary>
+        public IReadOnlyCollection<IPAddress> AdapterResolvers { get; init; } = [];
     }
 
     /// <summary>The cores' DNS ports: plain DNS, DNS-over-HTTPS, DNS-over-TLS.</summary>
@@ -164,6 +171,10 @@ public sealed class ColituKillSwitch
         // A server name that resolves to a public resolver (a tampered list) must not widen the resolver rules.
         var servers = Normalize(allowed.Servers).Where(address => !resolvers.Contains(address)).ToList();
         var api = Normalize(allowed.Api);
+        // Plain DNS from the app: IPv4 resolvers of the physical interface only (loopback is open already).
+        var adapterResolvers = Normalize(allowed.AdapterResolvers)
+            .Where(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any))
+            .ToList();
         var apiPorts = allowed.ApiPorts.Where(port => port is > 0 and <= 65535).Distinct().Order().ToList();
         if (apiPorts.Count == 0)
         {
@@ -195,6 +206,19 @@ public sealed class ColituKillSwitch
         // names. System lookups go to the TUN's resolver (sing-tun registers it with
         // systemd-resolved, and LAN DNS is routed into the TUN and hijacked there); only a socket
         // bound to the physical interface gets here. Root keeps it for the cores' own lookups.
+        // Residual risk: both DoH services are blocked in China and the system resolver can't
+        // reach anything while these rules hold, so the app asks the physical interface's own DNS
+        // servers for server names (ColituNetwork, only after DoH failed or stayed silent). This
+        // accept comes before the drop and is limited to the app's uid, UDP 53 and those few
+        // addresses (usually the router or the ISP's resolver), but every program of that user
+        // shares the uid: one that sends its own plain DNS queries straight to them (not through
+        // systemd-resolved) still leaks those names to the ISP outside the tunnel. TCP 53, every
+        // other resolver and every other user stay blocked. The cores can't take this over: they
+        // may dial only addresses the app resolved and let through here.
+        if (appUid is { } dnsUid)
+        {
+            AppendAddressRule(rules, $"meta skuid {dnsUid} ", adapterResolvers, " udp dport 53");
+        }
         rules.Append("    meta skuid != 0 udp dport 53 drop").Append('\n');
         rules.Append("    meta skuid != 0 tcp dport 53 drop").Append('\n');
         rules.Append($"    ip daddr {{ {string.Join(", ", allowLan ? LocalNetworks4 : LinkLocal4)} }} accept").Append('\n');

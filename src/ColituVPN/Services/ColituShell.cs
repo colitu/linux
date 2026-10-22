@@ -108,7 +108,7 @@ public static class ColituShell
         return output.Contains("false", StringComparison.Ordinal) ? false : null;
     }
 
-    private static string? Run(string program, params string[] args)
+    internal static string? Run(string program, params string[] args)
     {
         try
         {
