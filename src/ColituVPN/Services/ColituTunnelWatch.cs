@@ -263,6 +263,24 @@ public static class ColituTransportOrder
         return distinct.Count >= 2 && distinct.Count(protocol => !stalled(protocol)) <= 1;
     }
 
+    /// <summary>
+    /// Every TCP transport of the server was measured and none answered (outside the tunnel): the server
+    /// itself is out, not one transport. Hysteria2 is not measured (UDP) and does not count.
+    /// </summary>
+    public static bool ServerOutage(IReadOnlyDictionary<string, int> tcpLatency) =>
+        tcpLatency.Count > 0 && tcpLatency.Values.All(ms => ms < 0);
+
+    /// <summary>
+    /// In a server outage round: the transports whose port did not answer are left out, they cannot
+    /// connect either (about 7 s each), so the round gets back to the unmeasured UDP transport sooner.
+    /// Unchanged when nothing would be left or nothing is left out.
+    /// </summary>
+    public static List<T> WithoutSilent<T>(List<T> items, Func<T, string> protocol, IReadOnlyDictionary<string, int> tcpLatency)
+    {
+        var kept = items.Where(item => !tcpLatency.TryGetValue(protocol(item), out var ms) || ms >= 0).ToList();
+        return kept.Count > 0 && kept.Count < items.Count ? kept : items;
+    }
+
     /// <summary>The tier of a transport in a round whose marks are ignored (lower goes first).</summary>
     public static int IgnoredMarksTier(string protocol, Func<string, bool> proven, Func<string, bool> stalled, Func<string, bool> failedThisRound) =>
         failedThisRound(protocol) ? 3 : proven(protocol) ? 0 : stalled(protocol) ? 2 : 1;
