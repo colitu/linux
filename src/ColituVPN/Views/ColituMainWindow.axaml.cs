@@ -28,6 +28,7 @@ public partial class ColituMainWindow : Window
     private bool _started;
     private string _page = "home";
     private bool _offline;
+    private Task? _refreshRun;
 
     public ColituMainWindow()
     {
@@ -172,8 +173,22 @@ public partial class ColituMainWindow : Window
         }
     }
 
-    /// <summary>Reloads the account, plan, servers and usage. Also resumes an offline session.</summary>
-    private async Task RefreshDataAsync(bool includeAccount = true)
+    /// <summary>
+    /// Reloads the account, plan, servers and usage. Also resumes an offline session. Callers share
+    /// a run that is still going: during an outage one run can outlast the 20 s timer, and runs that
+    /// piled up behind it all hit the API at once when the network came back.
+    /// </summary>
+    private Task RefreshDataAsync(bool includeAccount = true)
+    {
+        if (_refreshRun is { IsCompleted: false } running)
+        {
+            return running;
+        }
+        _refreshRun = RefreshDataOnceAsync(includeAccount);
+        return _refreshRun;
+    }
+
+    private async Task RefreshDataOnceAsync(bool includeAccount)
     {
         if (!_auth.HasSession)
         {
