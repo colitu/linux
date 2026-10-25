@@ -10,7 +10,7 @@ namespace v2rayN.Desktop.Services;
 /// (web/portal/lib/i18n). XAML binds through <see cref="T"/>; switching the
 /// language refreshes every bound text without reopening windows.
 /// </summary>
-public sealed class Loc : INotifyPropertyChanged
+public sealed partial class Loc : INotifyPropertyChanged
 {
     public static Loc I { get; } = new();
 

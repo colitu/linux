@@ -400,6 +400,28 @@ public sealed class ColituAuthService
         _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ => old.Dispose(), TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// Colitu Passport (account-based, /client/passport…): any request with the session; the status and
+    /// body come back as they are (status 0 when there is no session or no answer).
+    /// </summary>
+    public async Task<PassportResponse> SendPassportAsync(HttpMethod method, string path, object? body, CancellationToken token = default)
+    {
+        if (!HasSession)
+        {
+            return new PassportResponse(0, "");
+        }
+        try
+        {
+            using var response = await SendAuthorizedAsync(() => body == null ? new HttpRequestMessage(method, BuildUri(path)) : JsonRequest(method, path, body), token: token);
+            return new PassportResponse((int)response.StatusCode, await response.Content.ReadAsStringAsync(token));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+        {
+            Logging.SaveLog($"ColituAuthService.SendPassport {path}: {ex.GetType().Name}");
+            return new PassportResponse(0, "");
+        }
+    }
+
     public async Task<T?> GetAuthorizedJsonAsync<T>(string path, CancellationToken token = default)
     {
         using var response = await SendAuthorizedAsync(() => new HttpRequestMessage(HttpMethod.Get, BuildUri(path)), token: token);

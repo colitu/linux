@@ -1454,6 +1454,29 @@
                                     </StackPanel>
                                 </Border>
 
+                                <!-- Colitu Passport: cover, the nearest goal and the count (ColituMainWindow.Passport.cs). -->
+                                <Button
+                                    x:Name="PassportHomeCard"
+                                    Margin="0,16,0,0"
+                                    Padding="14,12,16,12"
+                                    AutomationProperties.Name="{s:T passport.open}"
+                                    Background="{StaticResource PanelBrush}"
+                                    BorderBrush="{StaticResource PanelEdgeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="22"
+                                    HorizontalAlignment="Stretch"
+                                    Theme="{StaticResource PassportPlain}">
+                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                        <Image x:Name="PassportHomeCover" Width="38" Height="48" Stretch="Uniform" />
+                                        <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
+                                            <TextBlock FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" Text="{s:T passport.title}" />
+                                            <TextBlock x:Name="PassportHomeGoal" Margin="0,3,0,0" FontSize="12.5" Foreground="{StaticResource LilacBrush}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="PassportHomeCount" Grid.Column="2" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource LilacBrush}" />
+                                        <Path Grid.Column="3" Width="10" Height="10" Margin="10,0,0,0" VerticalAlignment="Center" Data="{StaticResource IconChevron}" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeLineCap="Round" StrokeThickness="1.8" />
+                                    </Grid>
+                                </Button>
+
                                 <!-- Plan -->
                                 <Border
                                     Margin="0,16,0,0"
@@ -1611,6 +1634,30 @@
                                     IsVisible="False"
                                     Theme="{StaticResource LinkButton}" />
                             </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- Colitu Passport (ColituMainWindow.Passport*.cs). Same place as the other pages: the Pages
+                         row under the 64 px nav, 44/40 sides, 4 px top; clipped so the backdrop stays below the nav. -->
+                    <Grid x:Name="PassportPage" ClipToBounds="True" IsVisible="False" RowDefinitions="Auto,*">
+                        <Image Grid.RowSpan="2" IsHitTestVisible="False" Opacity="0.5" Source="/Assets/Passport/passport_bg.jpg" Stretch="UniformToFill" />
+                        <Rectangle Grid.RowSpan="2" IsHitTestVisible="False">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                    <GradientStop Offset="0" Color="#000A0A0E" />
+                                    <GradientStop Offset="0.75" Color="#660A0A0E" />
+                                    <GradientStop Offset="1" Color="#E60A0A0E" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Grid x:Name="PassportHeader" MaxWidth="1240" Margin="44,4,40,14" ColumnDefinitions="Auto,*,Auto,Auto" />
+                        <ScrollViewer x:Name="PassportScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                            <Grid x:Name="PassportBody" MaxWidth="1240" Margin="44,4,40,28">
+                                <Grid x:Name="PassportColumns" ColumnDefinitions="300,40,*" RowDefinitions="Auto,Auto">
+                                    <StackPanel x:Name="PassportLeft" />
+                                    <StackPanel x:Name="PassportRight" Grid.Column="2" />
+                                </Grid>
+                            </Grid>
                         </ScrollViewer>
                     </Grid>
 
@@ -3550,6 +3597,10 @@
                     </StackPanel>
                 </Border>
             </Panel>
+
+            <!-- Colitu Passport panels and rewards (built in ColituMainWindow.PassportSheets.cs / PassportReveal.cs). -->
+            <Panel x:Name="PassportSheetLayer" IsVisible="False" />
+            <Panel x:Name="PassportRevealLayer" IsVisible="False" />
 
             <!-- Window controls (always on top) -->
             <StackPanel

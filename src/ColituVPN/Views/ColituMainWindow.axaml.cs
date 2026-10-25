@@ -79,6 +79,7 @@ public partial class ColituMainWindow : Window
         WireAccount();
         WireSupport();
         WireSudo();
+        InitPassport();
         BuildLanguageSelectors();
         BuildTrayIcon();
     }
@@ -251,6 +252,7 @@ public partial class ColituMainWindow : Window
         await _vpn.ForgetAccountAsync();
         StopSupportPolling();
         ClearNotices();
+        ForgetPassport();
         ShowAuth();
         ShowAuthError(Loc.I["auth.expired"]);
         ShowFromTray();
@@ -288,6 +290,7 @@ public partial class ColituMainWindow : Window
             "account" => AccountPage,
             "settings" => SettingsPage,
             "support" => SupportPage,
+            "passport" => PassportPage,
             _ => HomePage
         };
         foreach (var child in Pages.Children)
@@ -302,6 +305,7 @@ public partial class ColituMainWindow : Window
             "account" => NavAccount,
             "settings" => NavSettings,
             "support" => NavSupport,
+            "passport" => null,
             _ => NavHome
         };
         if (nav == null)
@@ -337,6 +341,12 @@ public partial class ColituMainWindow : Window
                 break;
             case "support":
                 _ = OpenSupportAsync();
+                break;
+            case "passport":
+                OnPassportOpened();
+                break;
+            case "home":
+                ApplyPassportHome();
                 break;
         }
         UpdateSupportPolling();

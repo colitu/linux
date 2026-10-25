@@ -211,6 +211,7 @@ public partial class ColituMainWindow
         _usage = null;
         _planRequired = false;
         ClearNotices();
+        ForgetPassport();
         AuthLoginTab.IsChecked = true;
         ShowAuth();
         // Rules kept from a crashed run need the password to go; say why there is no internet.
