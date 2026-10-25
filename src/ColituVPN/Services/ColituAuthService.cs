@@ -34,6 +34,9 @@ public sealed class ColituAuthService
     private HttpClient _httpClient = CreateHttpClient();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    // Refreshes run so far and the last one's outcome (both written under _refreshLock).
+    private long _refreshAttempts;
+    private ColituRefreshOutcome _lastRefreshOutcome;
     private readonly SemaphoreSlim _deviceLock = new(1, 1);
     private ColituSession _session = new();
     private string? _accessToken;
@@ -842,6 +845,7 @@ public sealed class ColituAuthService
     /// </summary>
     private async Task<ColituRefreshOutcome> RefreshSingleFlightAsync(string? tokenUsed)
     {
+        var attemptsBefore = Interlocked.Read(ref _refreshAttempts);
         await _refreshLock.WaitAsync();
         try
         {
@@ -853,7 +857,17 @@ public sealed class ColituAuthService
                 return ColituRefreshOutcome.Success;
             }
 
-            return await RefreshLockedAsync();
+            // A refresh that ran while this caller waited could not reach the panel: share that
+            // answer. Retrying once per waiting caller made the queue grow for as long as an
+            // outage lasted (every attempt outlasts the polls that keep joining it).
+            if (Interlocked.Read(ref _refreshAttempts) != attemptsBefore && _lastRefreshOutcome == ColituRefreshOutcome.Transient)
+            {
+                return ColituRefreshOutcome.Transient;
+            }
+
+            _lastRefreshOutcome = await RefreshLockedAsync();
+            Interlocked.Increment(ref _refreshAttempts);
+            return _lastRefreshOutcome;
         }
         finally
         {

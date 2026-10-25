@@ -89,6 +89,14 @@ public sealed class ColituVpnService
     private volatile bool _apiUnreachable;
     /// <summary>The stall marks covered (almost) every transport in this round and are ignored.</summary>
     private bool _marksIgnored;
+    /// <summary>
+    /// This round's latency probe found no TCP transport of the server answering while the internet
+    /// works outside the tunnel: a server outage. Its failed transports get no stall mark (once the
+    /// outage ended, the marks put the worst transport first, for 6 h once it carried traffic).
+    /// </summary>
+    private bool _serverOutageThisRound;
+    /// <summary>This round's TCP connect times per transport (-1: no answer); empty when not measured.</summary>
+    private Dictionary<string, int> _roundLatency = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A manual server where every transport failed: the error offers "Try the fastest server".</summary>
     public bool OfferFastestServer { get; private set; }
@@ -732,6 +740,7 @@ public sealed class ColituVpnService
                 _attemptNodeId = connected is { IsMultihop: true } ? null : ColituAcSpec.NodeId(connectedId) ?? _attemptNodeId;
                 try
                 {
+                    await ColituApiClient.PinDialHostsAsync(config, token);
                     var profiles = await ImportConfigAsync(config, connected);
                     if (forcedFirst != null && profiles.FindIndex(item => item.Candidate.Protocol == forcedFirst) is > 0 and var first)
                     {
@@ -2030,7 +2039,8 @@ public sealed class ColituVpnService
         }
         if (_activeTransport != null)
         {
-            // The device is online (the watcher checked): 10 minutes, 6 h once another transport carries traffic here.
+            // The device is online (the watcher checked) and the transport died alone (no spare; both
+            // paths dead is a Reconnect, which marks nothing): 10 minutes, 6 h once another transport carries traffic here.
             var shortMark = _adaptive.MarkMidSessionStall(_networkKey, ConnectedServer?.Id, _activeTransport, DateTimeOffset.UtcNow, provisional: true);
             SaveState();
             LogConnection(shortMark
@@ -2046,7 +2056,9 @@ public sealed class ColituVpnService
         LogConnection(_watch.SpareDeadUnreplaced
             ? $"The primary misses behind a dead spare ({detail}); reconnecting"
             : $"Both paths carry no traffic ({detail}); reconnecting");
-        // The watcher only gets here with the internet working outside the tunnel.
+        // The watcher only gets here with the internet working outside the tunnel. Primary and spare
+        // died together: the server or the path to it, so the transport gets no stall mark
+        // (MarkTransportAfterRestart); marking it put the worst transport first once an outage ended.
         if (ShouldLeaveServerAfterRestart(IsAutoSelection, internetDirect: true, bothPathsDead: true) && ConnectedServer?.Id is { } deadServer)
         {
             // Primary and spare carried nothing: the reconnect would try this server's transports
@@ -2064,6 +2076,13 @@ public sealed class ColituVpnService
     /// and Android.
     /// </summary>
     internal static bool ShouldLeaveServerAfterRestart(bool automatic, bool internetDirect, bool bothPathsDead) => automatic && internetDirect && bothPathsDead;
+
+    /// <summary>
+    /// The transport gets a stall mark after the watcher's verdict only when the internet works outside
+    /// the tunnel and it died alone: primary and spare dead together is the server's or the path's fault.
+    /// Same rule on Windows and Android.
+    /// </summary>
+    internal static bool MarkTransportAfterRestart(bool internetDirect, bool bothPathsDead) => internetDirect && !bothPathsDead;
 
     /// <summary>The spare server's addresses were remembered with its settings: re-apply the kill switch rules.</summary>
     private async Task AllowSpareServerAsync(ColituSpareServer spare)
@@ -2842,10 +2861,12 @@ public sealed class ColituVpnService
                 Servers = ColituNetwork.KnownAddresses(apiHosts.Concat(dohHosts)),
                 Api = api,
                 ApiPorts = apiUris.Select(uri => uri.Port).Distinct().ToList(),
-                Resolvers = resolvers
+                Resolvers = resolvers,
+                // Plain DNS of the physical interface, app only: server names when DoH is blocked (China).
+                AdapterResolvers = ColituNetwork.AdapterDnsServers()
             };
             await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
-            LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver addresses allowed");
+            LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver and {allowed.AdapterResolvers.Count} adapter DNS addresses allowed");
             return true;
         }
         catch (Exception ex)
@@ -3039,6 +3060,8 @@ public sealed class ColituVpnService
         }
 
         var serverId = config.ServerId ?? server?.Id;
+        _serverOutageThisRound = false;
+        _roundLatency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var lastGood = _adaptive.LastGoodTransport(_networkKey, serverId, DateTimeOffset.UtcNow);
         var offered = ordered.Select(item => item.Candidate.Protocol).ToList();
         bool Stalled(string protocol) => _adaptive.IsStalled(_networkKey, serverId, protocol, DateTimeOffset.UtcNow);
@@ -3057,6 +3080,12 @@ public sealed class ColituVpnService
             return hinted;
         }
         var latency = await MeasureTransportLatencyAsync(ordered);
+        _roundLatency = latency;
+        _serverOutageThisRound = ColituTransportOrder.ServerOutage(latency) && await InternetReachableDirectAsync();
+        if (_serverOutageThisRound)
+        {
+            LogConnection("No transport of this server answers outside the tunnel while the internet does: a server outage, failed transports of this round are not marked");
+        }
         if (_marksIgnored)
         {
             var proven = _adaptive.ProvenOnNetwork(_networkKey, DateTimeOffset.UtcNow);
@@ -3219,6 +3248,15 @@ public sealed class ColituVpnService
 
     private async Task StartFirstWorkingProfileAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles, ColituVpnConfigResponse config, ColituVpnServer? server, CancellationToken token, TimeSpan? serverBudget = null)
     {
+        if (_serverOutageThisRound)
+        {
+            var reachable = ColituTransportOrder.WithoutSilent(profiles, item => item.Candidate.Protocol, _roundLatency);
+            if (reachable.Count < profiles.Count)
+            {
+                LogConnection($"Server outage: transports whose port does not answer are skipped this round ({string.Join(", ", profiles.Except(reachable).Select(item => item.Candidate.Protocol))})");
+                profiles = reachable;
+            }
+        }
         var observations = new List<ColituProtocolObservation>();
         var watch = Stopwatch.StartNew();
         // Spares that failed together with their primary in this connect ("server|transport"): not reused.
@@ -3319,7 +3357,10 @@ public sealed class ColituVpnService
                     // credentials are a server still applying new ones, not a property of the transport.
                     if (!_credentialsRefused)
                     {
-                        _adaptive.MarkStalled(_networkKey, config.ServerId ?? server?.Id, candidate.Protocol, DateTimeOffset.UtcNow, provisional: true);
+                        if (!_serverOutageThisRound)
+                        {
+                            _adaptive.MarkStalled(_networkKey, config.ServerId ?? server?.Id, candidate.Protocol, DateTimeOffset.UtcNow, provisional: true);
+                        }
                         _failedThisConnect.Add(candidate.Protocol);
                     }
                     if (outcome == ColituParallelOutcome.SwapRoles && plan != null)

@@ -44,7 +44,7 @@ public static class ColituNetwork
             }
         }
 
-        var resolved = await ResolveViaDohAsync(host, token) ?? await ResolveViaSystemAsync(host, token);
+        var resolved = await ResolveViaDohOrAdapterAsync(host, token) ?? await ResolveViaSystemAsync(host, token);
         if (resolved != null)
         {
             lock (CacheGate)
@@ -53,6 +53,298 @@ public static class ColituNetwork
             }
         }
         return resolved;
+    }
+
+    private const int SolSocket = 1;
+    private const int SoBindToDevice = 25;
+    private static readonly TimeSpan AdapterDnsTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DohHeadStart = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>
+    /// DoH first; the physical interface's own resolvers only when DoH fails or stays silent for
+    /// <see cref="DohHeadStart"/> (both DoH services are blocked in China). Asking them only then
+    /// keeps the server names away from the ISP's resolver wherever DoH works (Russia), and a DoH
+    /// answer that arrives before theirs still wins (an ISP resolver may hand out a block page
+    /// address). They are asked straight from this process: while the kill switch is armed the
+    /// system resolver (systemd-resolved) can't reach anything, and the rules let only this app's
+    /// uid send UDP 53 to exactly these addresses (<see cref="ColituKillSwitch.Allowance.AdapterResolvers"/>).
+    /// </summary>
+    private static async Task<IPAddress?> ResolveViaDohOrAdapterAsync(string host, CancellationToken token)
+    {
+        using var race = CancellationTokenSource.CreateLinkedTokenSource(token);
+        try
+        {
+            var doh = ResolveViaDohAsync(host, race.Token);
+            if (await Task.WhenAny(doh, Task.Delay(DohHeadStart, race.Token)) == doh && await doh is { } early)
+            {
+                return early;
+            }
+            var adapter = ResolveViaAdapterDnsAsync(host, race.Token);
+            if (await Task.WhenAny(doh, adapter) == doh && await doh is { } fromDoh)
+            {
+                return fromDoh;
+            }
+            if (await adapter is { } fromAdapter)
+            {
+                Logging.SaveLog($"ColituNetwork | {ColituLogPrivacy.ForLog(host)} resolved through the adapter's DNS (DoH failed or silent)");
+                return fromAdapter;
+            }
+            return await doh;
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            race.Cancel();
+        }
+    }
+
+    /// <summary>
+    /// The IPv4 DNS servers of the physical interface (at most three): systemd-resolved's per-link
+    /// servers, else the nameservers of /etc/resolv.conf when it does not point at a local stub.
+    /// The kill switch lets the app's uid reach exactly these on UDP 53. Empty when none are known.
+    /// </summary>
+    public static IReadOnlyList<IPAddress> AdapterDnsServers()
+    {
+        if (!OperatingSystem.IsLinux() || PhysicalInterfaceName() is not { } device)
+        {
+            return [];
+        }
+        try
+        {
+            var resolvectl = ColituShell.SystemBinary("resolvectl");
+            var servers = File.Exists(resolvectl) ? ParseResolvectlDns(ColituShell.Run(resolvectl, "dns", device)) : [];
+            if (servers.Count == 0 && File.Exists("/etc/resolv.conf"))
+            {
+                servers = ParseResolvConf(File.ReadAllText("/etc/resolv.conf"));
+            }
+            return servers;
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituNetwork.AdapterDnsServers", ex);
+            return [];
+        }
+    }
+
+    /// <summary>"Link 2 (wlp3s0): 192.168.1.1 fe80::1%3" → the usable IPv4 servers.</summary>
+    internal static List<IPAddress> ParseResolvectlDns(string? output)
+    {
+        var addresses = new List<IPAddress>();
+        foreach (var line in (output ?? "").Split('\n'))
+        {
+            var colon = line.IndexOf("):", StringComparison.Ordinal);
+            if (colon < 0)
+            {
+                continue;
+            }
+            foreach (var word in line[(colon + 2)..].Split([' ', '\t', '\r'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                // "1.2.3.4#dns.example" (DoT server name) and "1.2.3.4:53" are written by newer systemd.
+                var text = word.Split('#')[0];
+                if (text.Count(ch => ch == ':') == 1)
+                {
+                    text = text.Split(':')[0];
+                }
+                if (IPAddress.TryParse(text, out var address))
+                {
+                    addresses.Add(address);
+                }
+            }
+        }
+        return UsableDnsServers(addresses);
+    }
+
+    /// <summary>"nameserver" lines of resolv.conf → the usable IPv4 servers (a local stub such as 127.0.0.53 is none).</summary>
+    internal static List<IPAddress> ParseResolvConf(string? text)
+    {
+        var addresses = new List<IPAddress>();
+        foreach (var line in (text ?? "").Split('\n'))
+        {
+            var words = line.Split([' ', '\t', '\r'], StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length >= 2 && words[0] == "nameserver" && IPAddress.TryParse(words[1], out var address))
+            {
+                addresses.Add(address);
+            }
+        }
+        return UsableDnsServers(addresses);
+    }
+
+    private static List<IPAddress> UsableDnsServers(IEnumerable<IPAddress> addresses) => addresses
+        .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+        .Where(address => address.AddressFamily == AddressFamily.InterNetwork
+            && !IPAddress.IsLoopback(address)
+            && !address.Equals(IPAddress.Any)
+            && !address.Equals(IPAddress.Broadcast)
+            && !IsPlaceholder(address))
+        .Distinct()
+        .Take(3)
+        .ToList();
+
+    /// <summary>An A record for <paramref name="host"/> from the physical interface's DNS servers, asked directly over UDP.</summary>
+    internal static async Task<IPAddress?> ResolveViaAdapterDnsAsync(string host, CancellationToken token)
+    {
+        var device = PhysicalInterfaceName();
+        var servers = AdapterDnsServers();
+        if (servers.Count == 0)
+        {
+            return null;
+        }
+
+        using var race = CancellationTokenSource.CreateLinkedTokenSource(token);
+        race.CancelAfter(AdapterDnsTimeout);
+        var pending = servers.Select(server => QueryUdpDnsAsync(server, host, device, race.Token)).ToList();
+        while (pending.Count > 0)
+        {
+            var finished = await Task.WhenAny(pending);
+            pending.Remove(finished);
+            if (await finished is { } address)
+            {
+                race.Cancel();
+                return address;
+            }
+        }
+        return null;
+    }
+
+    internal static async Task<IPAddress?> QueryUdpDnsAsync(IPAddress server, string host, string? device, CancellationToken token)
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            if (device.IsNotEmpty() && OperatingSystem.IsLinux())
+            {
+                try
+                {
+                    // Out of the physical interface even while the TUN owns the default route.
+                    socket.SetRawSocketOption(SolSocket, SoBindToDevice, Encoding.ASCII.GetBytes(device + "\0"));
+                }
+                catch (SocketException)
+                {
+                    // Kernels before 5.7 need CAP_NET_RAW: the query follows the routing table.
+                }
+            }
+            var id = (ushort)Random.Shared.Next(1, ushort.MaxValue);
+            await socket.SendToAsync(BuildDnsQuery(id, host), SocketFlags.None, new IPEndPoint(server, 53), token);
+            var buffer = new byte[1500];
+            while (true)
+            {
+                var received = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), token);
+                if (received.RemoteEndPoint is not IPEndPoint from || !from.Address.Equals(server))
+                {
+                    continue;
+                }
+                var reply = buffer.AsSpan(0, received.ReceivedBytes).ToArray();
+                if (DnsAnswerState(reply, id) == null)
+                {
+                    continue;
+                }
+                return FirstARecord(reply) is { } address && !IsPlaceholder(address) ? address : null;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (SocketException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A recursive DNS query for the A record of <paramref name="name"/>.</summary>
+    internal static byte[] BuildDnsQuery(ushort id, string name)
+    {
+        var packet = new List<byte> { (byte)(id >> 8), (byte)(id & 0xFF), 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        foreach (var label in name.TrimEnd('.').Split('.'))
+        {
+            var bytes = Encoding.ASCII.GetBytes(label);
+            packet.Add((byte)bytes.Length);
+            packet.AddRange(bytes);
+        }
+        packet.AddRange(new byte[] { 0x00, 0x00, 0x01, 0x00, 0x01 });
+        return packet.ToArray();
+    }
+
+    /// <summary>
+    /// For a reply to query <paramref name="id"/>: true when the resolver answered (no error or
+    /// "no such name"), false when it reported a failure (SERVFAIL, refused). Null for anything else.
+    /// </summary>
+    internal static bool? DnsAnswerState(byte[] reply, ushort id)
+    {
+        if (reply.Length < 12 || reply[0] != (byte)(id >> 8) || reply[1] != (byte)(id & 0xFF) || (reply[2] & 0x80) == 0)
+        {
+            return null;
+        }
+        var rcode = reply[3] & 0x0F;
+        return rcode is 0 or 3;
+    }
+
+    /// <summary>The first IPv4 address in the answer section of a DNS reply (CNAMEs skipped); null on errors.</summary>
+    internal static IPAddress? FirstARecord(byte[] reply)
+    {
+        if (reply.Length < 12 || (reply[3] & 0x0F) != 0)
+        {
+            return null;
+        }
+        var questions = reply[4] << 8 | reply[5];
+        var answers = reply[6] << 8 | reply[7];
+        var offset = 12;
+        for (var i = 0; i < questions; i++)
+        {
+            if (!SkipDnsName(reply, ref offset) || offset + 4 > reply.Length)
+            {
+                return null;
+            }
+            offset += 4;
+        }
+        for (var i = 0; i < answers; i++)
+        {
+            if (!SkipDnsName(reply, ref offset) || offset + 10 > reply.Length)
+            {
+                return null;
+            }
+            var type = reply[offset] << 8 | reply[offset + 1];
+            var recordClass = reply[offset + 2] << 8 | reply[offset + 3];
+            var length = reply[offset + 8] << 8 | reply[offset + 9];
+            offset += 10;
+            if (offset + length > reply.Length)
+            {
+                return null;
+            }
+            if (type == 1 && recordClass == 1 && length == 4)
+            {
+                return new IPAddress(reply.AsSpan(offset, 4));
+            }
+            offset += length;
+        }
+        return null;
+    }
+
+    private static bool SkipDnsName(byte[] packet, ref int offset)
+    {
+        while (offset < packet.Length)
+        {
+            var length = packet[offset];
+            if (length == 0)
+            {
+                offset++;
+                return true;
+            }
+            if ((length & 0xC0) == 0xC0)
+            {
+                offset += 2;
+                return offset <= packet.Length;
+            }
+            if ((length & 0xC0) != 0)
+            {
+                return false;
+            }
+            offset += 1 + length;
+        }
+        return false;
     }
 
     /// <summary>
