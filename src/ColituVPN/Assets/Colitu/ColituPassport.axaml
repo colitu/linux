@@ -1,0 +1,164 @@
+<!--
+    Colitu Passport (the Windows app's Styles/ColituPassport.xaml, colitu-android screens/Passport*.kt):
+    soft lilac glass, chromeless clickable cards and tiles, round header buttons, quiet chapter tabs
+    and pills. Every control shows a lilac ring under keyboard focus.
+-->
+<Styles
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Styles.Resources>
+        <ResourceDictionary>
+            <SolidColorBrush x:Key="PassportSheetFill" Color="#F213112E" />
+
+            <!-- A clickable area without chrome (cards, tiles, stamps); hover lightens it a little. -->
+            <ControlTheme x:Key="PassportPlain" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Foreground" Value="#F4F3FA" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="CornerRadius" Value="18" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Panel>
+                            <Border
+                                Name="Body"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+                                <ContentPresenter
+                                    Name="PART_ContentPresenter"
+                                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                    Content="{TemplateBinding Content}"
+                                    Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border Name="Hover" Background="#0EFFFFFF" CornerRadius="{TemplateBinding CornerRadius}" IsHitTestVisible="False" Opacity="0" />
+                            <Border Name="Focus" Margin="-3" BorderBrush="#C4B5FD" BorderThickness="2" CornerRadius="20" IsHitTestVisible="False" Opacity="0" />
+                        </Panel>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:pointerover /template/ Border#Hover">
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+                <Style Selector="^:pressed /template/ Border#Hover">
+                    <Setter Property="Background" Value="#1AFFFFFF" />
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+                <Style Selector="^:focus-visible /template/ Border#Focus">
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+                <Style Selector="^:disabled">
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Style>
+            </ControlTheme>
+
+            <!-- Round icon button of the passport header (back, QR, info) and the panels (close). -->
+            <ControlTheme x:Key="PassportRound" TargetType="Button">
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="40" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="#14FFFFFF" />
+                <Setter Property="BorderBrush" Value="#1FFFFFFF" />
+                <Setter Property="Foreground" Value="#A9ADC2" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Panel>
+                            <Border Name="Body" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="999">
+                                <ContentPresenter
+                                    Name="PART_ContentPresenter"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Content="{TemplateBinding Content}"
+                                    Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border Name="Focus" Margin="-3" BorderBrush="#C4B5FD" BorderThickness="2" CornerRadius="999" IsHitTestVisible="False" Opacity="0" />
+                        </Panel>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:pointerover">
+                    <Setter Property="Foreground" Value="#F4F3FA" />
+                </Style>
+                <Style Selector="^:pointerover /template/ Border#Body">
+                    <Setter Property="Background" Value="#26FFFFFF" />
+                </Style>
+                <Style Selector="^:focus-visible /template/ Border#Focus">
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+            </ControlTheme>
+
+            <!-- Quiet text tab of a chapter: kicker number, name, underline when active. -->
+            <ControlTheme x:Key="PassportChapterTab" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="#A9ADC2" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Padding" Value="10,4" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Panel>
+                            <Border Padding="{TemplateBinding Padding}" Background="Transparent">
+                                <StackPanel>
+                                    <ContentPresenter Name="PART_ContentPresenter" HorizontalAlignment="Center" Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" />
+                                    <Border Name="Line" Width="28" Height="2" Margin="0,6,0,0" HorizontalAlignment="Center" Background="Transparent" CornerRadius="1" />
+                                </StackPanel>
+                            </Border>
+                            <Border Name="Focus" Margin="-2" BorderBrush="#C4B5FD" BorderThickness="2" CornerRadius="12" IsHitTestVisible="False" Opacity="0" />
+                        </Panel>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:checked">
+                    <Setter Property="Foreground" Value="#F4F3FA" />
+                </Style>
+                <Style Selector="^:checked /template/ Border#Line">
+                    <Setter Property="Background" Value="#C4B5FD" />
+                </Style>
+                <Style Selector="^:pointerover">
+                    <Setter Property="Foreground" Value="#F4F3FA" />
+                </Style>
+                <Style Selector="^:focus-visible /template/ Border#Focus">
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+            </ControlTheme>
+
+            <!-- Selectable pill (title choice, compare modes); lilac when chosen. -->
+            <ControlTheme x:Key="PassportChip" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="#F4F3FA" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Padding" Value="14,8" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Panel>
+                            <Border Name="Body" Padding="{TemplateBinding Padding}" Background="#10FFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="17">
+                                <ContentPresenter Name="PART_ContentPresenter" HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border Name="Focus" Margin="-3" BorderBrush="#C4B5FD" BorderThickness="2" CornerRadius="20" IsHitTestVisible="False" Opacity="0" />
+                        </Panel>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:checked /template/ Border#Body">
+                    <Setter Property="Background" Value="#339F8CFF" />
+                    <Setter Property="BorderBrush" Value="#C4B5FD" />
+                </Style>
+                <Style Selector="^:pointerover /template/ Border#Body">
+                    <Setter Property="Background" Value="#24FFFFFF" />
+                </Style>
+                <Style Selector="^:disabled">
+                    <Setter Property="Foreground" Value="#6F7186" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Style>
+                <Style Selector="^:focus-visible /template/ Border#Focus">
+                    <Setter Property="Opacity" Value="1" />
+                </Style>
+            </ControlTheme>
+        </ResourceDictionary>
+    </Styles.Resources>
+</Styles>

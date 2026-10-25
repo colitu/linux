@@ -34,6 +34,9 @@ public sealed class ColituAuthService
     private HttpClient _httpClient = CreateHttpClient();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    // Refreshes run so far and the last one's outcome (both written under _refreshLock).
+    private long _refreshAttempts;
+    private ColituRefreshOutcome _lastRefreshOutcome;
     private readonly SemaphoreSlim _deviceLock = new(1, 1);
     private ColituSession _session = new();
     private string? _accessToken;
@@ -398,6 +401,28 @@ public sealed class ColituAuthService
         var old = Interlocked.Exchange(ref _httpClient, CreateHttpClient());
         // Requests already in flight keep the old client; dispose it once they are done.
         _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ => old.Dispose(), TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Colitu Passport (account-based, /client/passport…): any request with the session; the status and
+    /// body come back as they are (status 0 when there is no session or no answer).
+    /// </summary>
+    public async Task<PassportResponse> SendPassportAsync(HttpMethod method, string path, object? body, CancellationToken token = default)
+    {
+        if (!HasSession)
+        {
+            return new PassportResponse(0, "");
+        }
+        try
+        {
+            using var response = await SendAuthorizedAsync(() => body == null ? new HttpRequestMessage(method, BuildUri(path)) : JsonRequest(method, path, body), token: token);
+            return new PassportResponse((int)response.StatusCode, await response.Content.ReadAsStringAsync(token));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+        {
+            Logging.SaveLog($"ColituAuthService.SendPassport {path}: {ex.GetType().Name}");
+            return new PassportResponse(0, "");
+        }
     }
 
     public async Task<T?> GetAuthorizedJsonAsync<T>(string path, CancellationToken token = default)
@@ -820,6 +845,7 @@ public sealed class ColituAuthService
     /// </summary>
     private async Task<ColituRefreshOutcome> RefreshSingleFlightAsync(string? tokenUsed)
     {
+        var attemptsBefore = Interlocked.Read(ref _refreshAttempts);
         await _refreshLock.WaitAsync();
         try
         {
@@ -831,7 +857,17 @@ public sealed class ColituAuthService
                 return ColituRefreshOutcome.Success;
             }
 
-            return await RefreshLockedAsync();
+            // A refresh that ran while this caller waited could not reach the panel: share that
+            // answer. Retrying once per waiting caller made the queue grow for as long as an
+            // outage lasted (every attempt outlasts the polls that keep joining it).
+            if (Interlocked.Read(ref _refreshAttempts) != attemptsBefore && _lastRefreshOutcome == ColituRefreshOutcome.Transient)
+            {
+                return ColituRefreshOutcome.Transient;
+            }
+
+            _lastRefreshOutcome = await RefreshLockedAsync();
+            Interlocked.Increment(ref _refreshAttempts);
+            return _lastRefreshOutcome;
         }
         finally
         {

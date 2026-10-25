@@ -189,4 +189,47 @@ public class ColituKillSwitchTests
             ColituKillSwitch.HasLeftoverRules().Should().BeFalse();
         }
     }
+
+    private static ColituKillSwitch.Allowance WithAdapterDns() => new()
+    {
+        Servers = [IPAddress.Parse("203.0.113.7")],
+        AdapterResolvers = [IPAddress.Parse("192.168.1.1"), IPAddress.Parse("::ffff:10.0.0.1"), IPAddress.Parse("127.0.0.53"), IPAddress.Parse("2001:db8::53"), IPAddress.Parse("192.168.1.1")]
+    };
+
+    [Fact]
+    public void AdapterDns_OnlyTheAppsUid_OnlyUdp53_ToExactlyThoseAddresses()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(WithAdapterDns(), 4242, appUid: 1000);
+
+        script.Should().Contain("    meta skuid 1000 ip daddr { 192.168.1.1, 10.0.0.1 } udp dport 53 accept\n",
+            "IPv4-mapped addresses become IPv4, duplicates and loopback (open already) are left out");
+        script.Should().NotContain("2001:db8::53", "only IPv4 resolvers are asked");
+        script.Should().NotContain("tcp dport 53 accept");
+        script.Should().NotContain("meta skuid 0 ip daddr { 192.168.1.1");
+    }
+
+    [Fact]
+    public void AdapterDns_IsAcceptedBeforeTheDnsDrop()
+    {
+        var script = ColituKillSwitch.BuildEngageScript(WithAdapterDns(), 4242, appUid: 1000);
+
+        script.IndexOf("udp dport 53 accept", StringComparison.Ordinal)
+            .Should().BeLessThan(script.IndexOf("meta skuid != 0 udp dport 53 drop", StringComparison.Ordinal));
+        script.Should().Contain("meta skuid != 0 tcp dport 53 drop");
+    }
+
+    [Fact]
+    public void AdapterDns_NeedsTheAppsUid()
+    {
+        // Without a uid the rule would open plain DNS to every user: nothing is added.
+        ColituKillSwitch.BuildEngageScript(WithAdapterDns(), 4242).Should().NotContain("udp dport 53 accept");
+    }
+
+    [Fact]
+    public void AdapterDns_NoneKnown_LeavesTheRulesAsBefore()
+    {
+        var allowed = new ColituKillSwitch.Allowance { Servers = [IPAddress.Parse("203.0.113.7")] };
+
+        ColituKillSwitch.BuildEngageScript(allowed, 4242, appUid: 1000).Should().NotContain("dport 53 accept");
+    }
 }

@@ -28,6 +28,7 @@ public partial class ColituMainWindow : Window
     private bool _started;
     private string _page = "home";
     private bool _offline;
+    private Task? _refreshRun;
 
     public ColituMainWindow()
     {
@@ -79,6 +80,7 @@ public partial class ColituMainWindow : Window
         WireAccount();
         WireSupport();
         WireSudo();
+        InitPassport();
         BuildLanguageSelectors();
         BuildTrayIcon();
     }
@@ -172,8 +174,22 @@ public partial class ColituMainWindow : Window
         }
     }
 
-    /// <summary>Reloads the account, plan, servers and usage. Also resumes an offline session.</summary>
-    private async Task RefreshDataAsync(bool includeAccount = true)
+    /// <summary>
+    /// Reloads the account, plan, servers and usage. Also resumes an offline session. Callers share
+    /// a run that is still going: during an outage one run can outlast the 20 s timer, and runs that
+    /// piled up behind it all hit the API at once when the network came back.
+    /// </summary>
+    private Task RefreshDataAsync(bool includeAccount = true)
+    {
+        if (_refreshRun is { IsCompleted: false } running)
+        {
+            return running;
+        }
+        _refreshRun = RefreshDataOnceAsync(includeAccount);
+        return _refreshRun;
+    }
+
+    private async Task RefreshDataOnceAsync(bool includeAccount)
     {
         if (!_auth.HasSession)
         {
@@ -251,6 +267,7 @@ public partial class ColituMainWindow : Window
         await _vpn.ForgetAccountAsync();
         StopSupportPolling();
         ClearNotices();
+        ForgetPassport();
         ShowAuth();
         ShowAuthError(Loc.I["auth.expired"]);
         ShowFromTray();
@@ -288,6 +305,7 @@ public partial class ColituMainWindow : Window
             "account" => AccountPage,
             "settings" => SettingsPage,
             "support" => SupportPage,
+            "passport" => PassportPage,
             _ => HomePage
         };
         foreach (var child in Pages.Children)
@@ -302,6 +320,7 @@ public partial class ColituMainWindow : Window
             "account" => NavAccount,
             "settings" => NavSettings,
             "support" => NavSupport,
+            "passport" => null,
             _ => NavHome
         };
         if (nav == null)
@@ -337,6 +356,12 @@ public partial class ColituMainWindow : Window
                 break;
             case "support":
                 _ = OpenSupportAsync();
+                break;
+            case "passport":
+                OnPassportOpened();
+                break;
+            case "home":
+                ApplyPassportHome();
                 break;
         }
         UpdateSupportPolling();

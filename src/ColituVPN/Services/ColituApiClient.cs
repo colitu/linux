@@ -271,6 +271,46 @@ public sealed class ColituApiClient
         return pinned;
     }
 
+    /// <summary>
+    /// Settings cached while no resolver answered still dial host names, which the core would look
+    /// up through its own resolvers (1.1.1.1, 8.8.8.8): a censored network (China) doesn't answer
+    /// those, and the kill switch lets the cores dial only addresses resolved here. Resolves them
+    /// the same way a fresh config is pinned, and dials the addresses (the SNI stays in the link).
+    /// </summary>
+    internal static async Task PinDialHostsAsync(ColituVpnConfigResponse config, CancellationToken token)
+    {
+        var hosts = config.Candidates.Select(item => ColituShareLinkBuilder.DialHostOf(item.ShareLink))
+            .OfType<string>()
+            .Where(ColituShareLinkBuilder.IsPlainHost)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (hosts.Count == 0)
+        {
+            return;
+        }
+        var pinned = new Dictionary<string, System.Net.IPAddress>(StringComparer.OrdinalIgnoreCase);
+        foreach (var host in hosts)
+        {
+            if (await ColituNetwork.ResolveServerAsync(host, token) is { } address)
+            {
+                pinned[host] = address;
+                Logging.SaveLog($"ColituApiClient | Server {ColituLogPrivacy.ForLog(host)} resolved to {ColituLogPrivacy.ForLog(address.ToString())} (stored settings)");
+            }
+        }
+        if (pinned.Count == 0)
+        {
+            return;
+        }
+        foreach (var candidate in config.Candidates)
+        {
+            if (ColituShareLinkBuilder.DialHostOf(candidate.ShareLink) is { } host && pinned.TryGetValue(host, out var address))
+            {
+                candidate.ShareLink = ColituShareLinkBuilder.WithDialAddress(candidate.ShareLink, address);
+            }
+        }
+        config.RawConfig = string.Join(Environment.NewLine, config.Candidates.Select(item => item.ShareLink));
+    }
+
     /// <summary>Best-effort report of which transports worked for a node.</summary>
     /// <param name="networkToken">The panel's opaque token of the network the attempt was made on: the
     /// panel counts the results for that network anonymously (network hints). Null without one.</param>
@@ -757,6 +797,42 @@ public static class ColituShareLinkBuilder
     public static string? HostOf(JsonElement payload)
     {
         return payload.ValueKind == JsonValueKind.Object ? Str(Obj(payload, "endpoint"), "host") : null;
+    }
+
+    /// <summary>A host name or address that can be written into a share link as is.</summary>
+    internal static bool IsPlainHost(string? host)
+    {
+        return !string.IsNullOrEmpty(host)
+            && host.Length <= 253
+            && host.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or ':')
+            && Uri.CheckHostName(host) is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6;
+    }
+
+    // scheme://userinfo@host:port...; the user info is escaped or base64url, so the last '@' before the query ends it.
+    private static readonly System.Text.RegularExpressions.Regex DialHost = new(
+        @"^(?<head>[a-z0-9]+://[^?#]*@)(?<host>[^:/?#\[\]@]+)(?<tail>:\d+(?:[/?#].*)?)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    /// <summary>The host name a share link from <see cref="Build"/> dials; null when it dials an address.</summary>
+    public static string? DialHostOf(string? link)
+    {
+        var match = DialHost.Match(link?.Trim() ?? "");
+        return match.Success && !System.Net.IPAddress.TryParse(match.Groups["host"].Value, out _) ? match.Groups["host"].Value : null;
+    }
+
+    /// <summary>
+    /// <paramref name="link"/> dialling <paramref name="address"/> instead of its host name. Every
+    /// TLS/Reality link carries its SNI separately, so only the dial target changes.
+    /// </summary>
+    public static string WithDialAddress(string link, System.Net.IPAddress address)
+    {
+        var match = DialHost.Match(link.Trim());
+        if (!match.Success)
+        {
+            return link;
+        }
+        var dial = address.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{address}]" : address.ToString();
+        return match.Groups["head"].Value + dial + match.Groups["tail"].Value;
     }
 
     /// <param name="addressOverride">A resolved address to dial instead of the host name (TLS/Reality keep the name as SNI).</param>

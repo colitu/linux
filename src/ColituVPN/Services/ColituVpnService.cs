@@ -740,6 +740,7 @@ public sealed class ColituVpnService
                 _attemptNodeId = connected is { IsMultihop: true } ? null : ColituAcSpec.NodeId(connectedId) ?? _attemptNodeId;
                 try
                 {
+                    await ColituApiClient.PinDialHostsAsync(config, token);
                     var profiles = await ImportConfigAsync(config, connected);
                     if (forcedFirst != null && profiles.FindIndex(item => item.Candidate.Protocol == forcedFirst) is > 0 and var first)
                     {
@@ -2860,10 +2861,12 @@ public sealed class ColituVpnService
                 Servers = ColituNetwork.KnownAddresses(apiHosts.Concat(dohHosts)),
                 Api = api,
                 ApiPorts = apiUris.Select(uri => uri.Port).Distinct().ToList(),
-                Resolvers = resolvers
+                Resolvers = resolvers,
+                // Plain DNS of the physical interface, app only: server names when DoH is blocked (China).
+                AdapterResolvers = ColituNetwork.AdapterDnsServers()
             };
             await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
-            LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver addresses allowed");
+            LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver and {allowed.AdapterResolvers.Count} adapter DNS addresses allowed");
             return true;
         }
         catch (Exception ex)

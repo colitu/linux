@@ -22,6 +22,7 @@
         <StyleInclude Source="avares://Semi.Avalonia.DataGrid/Index.axaml" />
         <dialogHost:DialogHostStyles />
         <StyleInclude Source="avares://ColituVPN/Assets/Colitu/ColituTheme.axaml" />
+        <StyleInclude Source="avares://ColituVPN/Assets/Colitu/ColituPassport.axaml" />
 
         <Style Selector="dialogHost|DialogHost">
             <Setter Property="OverlayBackground" Value="{DynamicResource SemiColorOverlayBackground}" />
