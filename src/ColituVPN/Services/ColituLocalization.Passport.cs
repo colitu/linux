@@ -35,7 +35,7 @@ public sealed partial class Loc
         ["passport.shareStampText"] = ["Новая марка в моём паспорте Colitu: {country}. colitu.com", "Colitu Pasaportuma yeni pul: {country}. colitu.com", "New stamp in my Colitu Passport: {country}. colitu.com"],
         ["passport.shareLevelText"] = ["Моя марка Colitu: {country}, {level}. colitu.com", "Colitu pulum: {country}, {level}. colitu.com", "My Colitu stamp: {country}, {level}. colitu.com"],
         ["passport.intro.start"] = ["Начать", "Başla", "Start"],
-        ["passport.intro.body"] = ["Каждая страна, к которой вы подключаетесь, оставляет марку. Всё хранится на вашем устройстве.", "Bağlandığın her ülke bir pul bırakır. Her şey yalnızca cihazında saklanır.", "Every country you connect to leaves a stamp. It all stays on your device."],
+        ["passport.intro.body"] = ["Каждая страна, к которой вы подключаетесь, оставляет марку. Паспорт хранится в вашем аккаунте и доступен на всех устройствах.", "Bağlandığın her ülke bir pul bırakır. Pasaportun hesabına kaydedilir, her cihazda seninle.", "Every country you connect to leaves a stamp. Your passport is saved to your account and follows you to every device."],
         ["passport.intro.title"] = ["Ваш паспорт путешествий", "Seyahat pasaportun hazır", "Your travel passport"],
         ["passport.set.sound"] = ["Звуки", "Sesler", "Sounds"],
         ["passport.r.special"] = ["ОСОБАЯ МАРКА", "ÖZEL PUL", "SPECIAL STAMP"],
