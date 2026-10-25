@@ -157,7 +157,7 @@ public class ColituWindowsParity20261012Tests : IDisposable
     public void PackageScript_PinsCoreVersionsAndHashes()
     {
         var script = File.ReadAllText(Path.Combine(AppSource(), "..", "..", "scripts", "package-linux.sh"));
-        script.Should().Contain("XRAY_VERSION=\"26.10.10\"").And.Contain("SINGBOX_VERSION=\"1.14.3\"");
+        script.Should().Contain("XRAY_VERSION=\"26.10.21\"").And.Contain("SINGBOX_VERSION=\"1.14.3\"");
         script.Should().Contain("https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/$XRAY_ZIP");
         script.Should().Contain("https://github.com/SagerNet/sing-box/releases/download/v$SINGBOX_VERSION/$SINGBOX_TGZ");
         foreach (var name in new[] { "XRAY_ZIP_SHA256", "XRAY_SHA256", "SINGBOX_TGZ_SHA256", "SINGBOX_SHA256", "CRONET_SHA256" })
