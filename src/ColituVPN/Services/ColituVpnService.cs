@@ -175,6 +175,20 @@ public sealed class ColituVpnService
         SaveState();
     }
 
+    /// <summary>Expiry of the last Premium (bought, gifted or from an invite) seen on this install (ColituUpsell).</summary>
+    public string? PremiumSeenUntil => _session.PremiumSeenUntil;
+
+    /// <summary>Remembers (or forgets, with null) the end of the last Premium seen.</summary>
+    public void SetPremiumSeenUntil(string? until)
+    {
+        if (_session.PremiumSeenUntil == until)
+        {
+            return;
+        }
+        _session = _session with { PremiumSeenUntil = until };
+        SaveState();
+    }
+
     /// <summary>
     /// Raised with a localization key for events the user should hear about even
     /// when they did not trigger them (automatic reconnects, dropped tunnels).
@@ -886,10 +900,10 @@ public sealed class ColituVpnService
             // tried, or no internet) keeps the rules. Disconnect, turning the kill switch off,
             // signing out and quitting remove them; a crash keeps them (adopted at the next start).
             var devicePaused = ex is ColituApiException { ErrorCode: ColituDevicePause.ErrorCode };
-            var noPlan = ex is ColituApiException planApi && IsPlanError(planApi);
+            var noPlan = ex is ColituApiException planApi && IsPlanError(planApi) || ColituUpsell.IsQuotaError(ex);
             if (_killSwitch.IsEngaged && ReleaseKillSwitchAfterFailure(KillSwitchApplies, devicePaused, noPlan))
             {
-                // A paused device or no plan never keeps the internet closed: there is nothing to reconnect to.
+                // A paused device, no plan or a used-up free allowance never keeps the internet closed: there is nothing to reconnect to.
                 await ReleaseKillSwitchAsync(devicePaused ? "this device is paused (device limit)" : noPlan ? "no active plan" : "connection failed, kill switch is off");
             }
             else if (_killSwitch.IsEngaged)
@@ -4665,6 +4679,8 @@ public sealed record ColituVpnSession
     public bool TunOfferAnswered { get; init; }
     /// <summary>Local date (yyyy-MM-dd) the plan-end banner was last closed.</summary>
     public string? PlanNoticeDismissedOn { get; init; }
+    /// <summary>Expiry of the last Premium seen; back on the free plan, home says once that it ended. Cleared when that banner is closed.</summary>
+    public string? PremiumSeenUntil { get; init; }
     /// <summary>Last non-empty <c>client_country</c> of the server list (the panel sends none through the VPN).</summary>
     public string? ClientCountry { get; init; }
     /// <summary>Last non-empty <c>client_network</c> of the server list; part of the Adaptive Connect network key.</summary>

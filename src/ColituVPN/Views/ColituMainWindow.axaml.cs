@@ -72,6 +72,7 @@ public partial class ColituMainWindow : Window
         WireMfa();
         WireRecovery();
         WirePaused();
+        WireUpsell();
         WireNotices();
         WireSplit();
         WireHome();

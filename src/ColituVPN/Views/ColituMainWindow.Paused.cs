@@ -47,7 +47,7 @@ public partial class ColituMainWindow
             DevicePausedView.IsVisible = false;
             return;
         }
-        DevicePausedBody.Text = pause.Describe(Loc.I);
+        DevicePausedBody.Text = $"{pause.Describe(Loc.I)} {Loc.I["paused.premiumHint"]}";
         DevicePausedUnblock.IsVisible = _vpn.KillSwitchEngaged && _vpn.Status != ColituVpnStatus.Connected;
         if (!DevicePausedView.IsVisible)
         {

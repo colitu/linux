@@ -69,7 +69,7 @@ public partial class ColituMainWindow
     {
         var now = DateTimeOffset.UtcNow;
         var store = ColituNoticeStore.Instance;
-        var next = ColituNotices.PickNext(_notices, store.IsDismissed, now);
+        var next = ColituNotices.PickNext(_notices.Where(notice => !ColituUpsell.CoversNotice(_upsell, notice)), store.IsDismissed, now);
         var changed = next?.Id != _shownNotice?.Id;
         _shownNotice = next;
         if (next == null)

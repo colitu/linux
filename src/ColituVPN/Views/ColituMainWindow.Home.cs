@@ -112,6 +112,7 @@ public partial class ColituMainWindow
             : blocked ? loc["home.title.blocked"]
             : busy ? loc["home.title.connecting"]
             : _planRequired ? loc["home.title.noplan"]
+            : _upsell.BlocksConnect ? loc["upsell.out.title"]
             : loc["home.title.off"];
         HomeSubtitle.Text = on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
             : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked"
@@ -119,11 +120,13 @@ public partial class ColituMainWindow
                 : "home.sub.blocked"]
             : busy ? loc[_vpn.ConnectStage ?? "home.sub.connecting"]
             : _planRequired ? loc["home.sub.noplan"]
+            : _upsell.BlocksConnect ? $"{UsedUpRenewText()} {loc["upsell.out.premium"]}"
             : status == ColituVpnStatus.Error && _vpn.LastError is { Length: > 0 } error ? error
             : loc["home.sub.off"];
         ConnectLabel.Text = on ? loc["home.tapOff"]
             : busy ? loc["home.tapCancel"]
             : _planRequired ? loc["plan.choose"]
+            : _upsell.BlocksConnect ? loc["upsell.cta"]
             : loc["home.tap"];
         ToolTip.SetTip(ConnectButton, on ? loc["home.disconnect"] : busy ? loc["home.cancel"] : loc["home.connect"]);
         var protocol = on ? _vpn.ConnectedProtocol : null;
@@ -194,6 +197,17 @@ public partial class ColituMainWindow
             return;
         }
 
+        if (_upsell.BlocksConnect && !_offline)
+        {
+            // The panel would refuse: look again first (a new month, or Premium bought on the website).
+            await RefreshDataAsync();
+            if (_upsell.BlocksConnect)
+            {
+                ShowQuotaUsedUp();
+                return;
+            }
+        }
+
         if (_vpn.NeedsSudoPassword && !await AskSudoPasswordAsync())
         {
             return;
@@ -220,6 +234,12 @@ public partial class ColituMainWindow
         catch (ColituSudoRequiredException)
         {
             ShowToast(Loc.I["err.admin"], true);
+        }
+        catch (Exception ex) when (ColituUpsell.IsQuotaError(ex))
+        {
+            // The free month's traffic is used up: fresh numbers for the banner, then the way to Premium.
+            await RefreshDataAsync();
+            ShowQuotaUsedUp();
         }
         catch (Exception ex)
         {
@@ -320,6 +340,7 @@ public partial class ColituMainWindow
         CurrentPlanText.Text = active ? $"{PlanTitle(subscription!)} · {PlanDetailText(subscription!)}" : loc["plan.none"];
         SetBadge(CurrentPlanBadge, CurrentPlanBadgeText, status);
         CreditText.Text = loc.Format("brand.credit", ("brand", "COLITU LIMITED"));
+        ApplyUpsell();
     }
 
     /// <summary>The free plan: 1 GB a month, renewed on the 1st.</summary>

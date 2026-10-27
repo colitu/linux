@@ -1369,6 +1369,65 @@
                                         </Button>
                                     </Grid>
                                 </Border>
+                                <!-- Free plan: the month's allowance and the way to Premium; stronger when running low, used up or just back from Premium (ColituMainWindow.Upsell.cs) -->
+                                <Border
+                                    x:Name="UpsellBanner"
+                                    Margin="0,0,0,16"
+                                    Classes="neutralBox"
+                                    IsVisible="False">
+                                    <StackPanel>
+                                        <Grid x:Name="UpsellCompact" ColumnDefinitions="*,Auto">
+                                            <TextBlock
+                                                x:Name="UpsellCompactText"
+                                                VerticalAlignment="Center"
+                                                FontSize="13"
+                                                Foreground="{StaticResource MutedBrush}"
+                                                TextWrapping="Wrap" />
+                                            <Button
+                                                x:Name="UpsellCompactButton"
+                                                Grid.Column="1"
+                                                Margin="12,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Content="{s:T upsell.cta}"
+                                                Theme="{StaticResource LinkButton}" />
+                                        </Grid>
+                                        <StackPanel
+                                            x:Name="UpsellStrong"
+                                            Margin="4,4,4,4"
+                                            IsVisible="False"
+                                            Spacing="4">
+                                            <TextBlock
+                                                x:Name="UpsellTitle"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Foreground="{StaticResource TextBrush}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock
+                                                x:Name="UpsellBody"
+                                                FontSize="13"
+                                                Foreground="{StaticResource MutedBrush}"
+                                                TextWrapping="Wrap" />
+                                            <StackPanel
+                                                Margin="0,8,0,0"
+                                                Orientation="Horizontal"
+                                                Spacing="16">
+                                                <Button
+                                                    x:Name="UpsellPremiumButton"
+                                                    Height="40"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource PrimaryButton}">
+                                                    <TextBlock FontSize="14" Text="{s:T upsell.cta}" />
+                                                </Button>
+                                                <Button
+                                                    x:Name="UpsellLaterButton"
+                                                    VerticalAlignment="Center"
+                                                    Content="{s:T upsell.later}"
+                                                    IsVisible="False"
+                                                    Theme="{StaticResource LinkButton}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
                                 <!-- End of the trial or plan (closable for the day) -->
                                 <Border
                                     x:Name="PlanNoticeBanner"
@@ -1376,10 +1435,14 @@
                                     Classes="warnBox"
                                     IsVisible="False">
                                     <Grid ColumnDefinitions="*,Auto">
-                                        <TextBlock
-                                            x:Name="PlanNoticeText"
-                                            VerticalAlignment="Center"
-                                            Classes="warnText" />
+                                        <StackPanel VerticalAlignment="Center" Spacing="4">
+                                            <TextBlock x:Name="PlanNoticeText" Classes="warnText" />
+                                            <Button
+                                                x:Name="PlanNoticePremium"
+                                                HorizontalAlignment="Left"
+                                                Content="{s:T upsell.cta}"
+                                                Theme="{StaticResource LinkButton}" />
+                                        </StackPanel>
                                         <Button
                                             x:Name="PlanNoticeClose"
                                             Grid.Column="1"
