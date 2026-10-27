@@ -204,11 +204,17 @@ internal sealed class ColituRecoverySet
     public static bool ShouldUse(bool automatic, bool apiUnreachableOnEveryBase, bool cacheUsable) =>
         automatic && apiUnreachableOnEveryBase && !cacheUsable;
 
-    /// <summary>The first server in the set's order that did not fail in this connect; null when none is left.</summary>
-    public ColituConfigEnvelopeDto? NextServer(IEnumerable<string> failed)
+    /// <summary>
+    /// The first server in the set's order that did not fail in this connect; null when none is left.
+    /// Servers <paramref name="penalized"/> on this network (e.g. both paths just died there) come last,
+    /// still in the set's order.
+    /// </summary>
+    public ColituConfigEnvelopeDto? NextServer(IEnumerable<string> failed, IEnumerable<string>? penalized = null)
     {
         var skip = failed.Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
-        return Configs.FirstOrDefault(item => !skip.Any(id => SameServer(id, item.Server?.Id)));
+        var last = penalized?.Where(id => !string.IsNullOrWhiteSpace(id)).ToList() ?? [];
+        var left = Configs.Where(item => !skip.Any(id => SameServer(id, item.Server?.Id))).ToList();
+        return left.FirstOrDefault(item => !last.Any(id => SameServer(id, item.Server?.Id))) ?? left.FirstOrDefault();
     }
 
     /// <summary>

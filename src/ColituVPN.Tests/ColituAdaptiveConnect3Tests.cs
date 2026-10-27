@@ -159,6 +159,20 @@ public class ColituAdaptiveConnect3Tests
         set.NextServer(["nl-9"])!.Server!.Id.Should().Be("de-1");
     }
 
+    // Audit 2026-10-26: a server whose primary and spare had just died (penalized here) led the set again.
+    [Fact]
+    public void PenalizedServersGoLast_StillInTheSetsOrder()
+    {
+        var set = ColituRecoverySet.Parse(Set(ids: ["de-1", "fi-1", "se-1"]))!;
+
+        set.NextServer([], ["DE-1"])!.Server!.Id.Should().Be("fi-1");
+        set.NextServer(["fi-1"], ["de-1"])!.Server!.Id.Should().Be("se-1");
+        // Only penalized servers left: they are still tried, in the set's order.
+        set.NextServer(["fi-1", "se-1"], ["de-1"])!.Server!.Id.Should().Be("de-1");
+        set.NextServer([], ["de-1", "fi-1", "se-1"])!.Server!.Id.Should().Be("de-1");
+        set.NextServer(["de-1", "fi-1", "se-1"], ["de-1"]).Should().BeNull();
+    }
+
     [Fact]
     public async Task AnEnvelope_BecomesSettingsLikeACachedOne_AndItsOwnOfflineGraceIsIgnored()
     {

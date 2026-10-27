@@ -346,6 +346,14 @@ public class ColituAdaptiveConnect2Tests
     public void DeadServer_LeftOnlyInAutomaticModeWhenBothPathsDied(bool automatic, bool internetDirect, bool bothPathsDead, bool leave) =>
         ColituVpnService.ShouldLeaveServerAfterRestart(automatic, internetDirect, bothPathsDead).Should().Be(leave);
 
+    // Audit 2026-10-26: a spare on another server dying together with the primary is this computer's
+    // network, not the primary's server; a spare on the same server still leaves it.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void DeadServer_KeptWhenTheSpareOnAnotherServerDiedToo(bool spareOnOtherServer, bool leave) =>
+        ColituVpnService.ShouldLeaveServerAfterRestart(automatic: true, internetDirect: true, bothPathsDead: true, spareOnOtherServer).Should().Be(leave);
+
     // A server outage (2026-10-22 Windows test PC: every port of the server blocked for 40 s) marked
     // each transport it tried; once the outage ended the round landed on the worst one, which then got
     // the only good mark and kept the others last for 6 h.
