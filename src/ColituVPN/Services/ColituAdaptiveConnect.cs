@@ -117,6 +117,9 @@ public static class ColituAdaptiveConnect
     /// <item>successful pings (fresh, or up to 6 h old on this network), fastest first;</item>
     /// <item>servers without a usable ping keep the panel's order, after the pinged ones.</item>
     /// </list>
+    /// <paramref name="hintedServers"/> (the panel's blocked_servers: an address block in the
+    /// client's country) count as penalized here with the oldest penalty, except the last server
+    /// that worked on this network: this device's own success beats the hint.
     /// </summary>
     public static List<ColituVpnServer> Rank(
         IEnumerable<ColituVpnServer> servers,
@@ -124,7 +127,8 @@ public static class ColituAdaptiveConnect
         ColituAdaptiveMemory memory,
         string networkKey,
         string? clientCountry,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        IReadOnlyCollection<string>? hintedServers = null)
     {
         var country = clientCountry?.Trim().ToUpperInvariant();
         var pushHome = country is { Length: 2 } && HomePushbackCountries.Contains(country);
@@ -141,7 +145,9 @@ public static class ColituAdaptiveConnect
                 {
                     Server = server,
                     Index = index,
-                    PenalizedAt = memory.PenalizedAt(networkKey, server.Id, now),
+                    PenalizedAt = memory.PenalizedAt(networkKey, server.Id, now)
+                        ?? (hintedServers != null && hintedServers.Contains(server.Id!, StringComparer.OrdinalIgnoreCase)
+                            && !string.Equals(server.Id, lastGood, StringComparison.OrdinalIgnoreCase) ? DateTimeOffset.UnixEpoch : null),
                     PingFailed = fresh && sample!.Ms == null,
                     OwnCountry = pushHome && string.Equals(server.CountryCode?.Trim(), country, StringComparison.OrdinalIgnoreCase),
                     LastGood = lastGood != null && string.Equals(server.Id, lastGood, StringComparison.OrdinalIgnoreCase),

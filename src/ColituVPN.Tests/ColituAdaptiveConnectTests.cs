@@ -114,6 +114,21 @@ public class ColituAdaptiveConnectTests
     }
 
     [Fact]
+    public void Rank_HintedServers_GoLastBeforeOwnPenalties_ExceptTheLastGoodOne()
+    {
+        var servers = new[] { Server("blocked"), Server("own"), Server("a"), Server("good") };
+        var memory = new ColituAdaptiveMemory();
+        memory.Penalize(Wifi, "own", Now.AddMinutes(-5));
+        memory.RememberGoodServer(Wifi, "good", Now.AddMinutes(-10));
+        var pings = Pings(("blocked", 20), ("own", 30), ("a", 50), ("good", 60));
+
+        ColituAdaptiveConnect.Rank(servers, pings, memory, Wifi, "RU", Now, ["blocked", "good"]).Select(server => server.Id)
+            .Should().Equal("good", "a", "blocked", "own");
+        // Without hints the fast server leads as before.
+        Rank(servers, pings, memory, "RU").Should().Equal("good", "blocked", "a", "own");
+    }
+
+    [Fact]
     public void Rank_LastGoodServerOnThisNetwork_GoesFirst()
     {
         var servers = new[] { Server("a"), Server("b"), Server("c") };

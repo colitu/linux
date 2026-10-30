@@ -273,7 +273,11 @@ public sealed class ColituVpnService
 
     /// <summary>The order automatic mode tries the servers in on the current network (see <see cref="ColituAdaptiveConnect.Rank"/>).</summary>
     public List<ColituVpnServer> RankedServers() =>
-        ColituAdaptiveConnect.Rank(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow);
+        ColituAdaptiveConnect.Rank(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow, HintedServers());
+
+    /// <summary>Servers the panel hints as blocked in this country, for the network the hints came on.</summary>
+    private IReadOnlyCollection<string> HintedServers() =>
+        string.Equals(_session.NetworkHintsNetwork, _session.ClientNetwork, StringComparison.Ordinal) ? _session.NetworkHintsServers ?? [] : [];
 
     /// <summary>
     /// Pings every location with a probe address (see <see cref="ColituLatency"/>) and keeps the
@@ -375,6 +379,7 @@ public sealed class ColituVpnService
             {
                 NetworkHintsBlocked = servers.NetworkHintsBlocked,
                 NetworkHintsPreferred = servers.NetworkHintsPreferred,
+                NetworkHintsServers = servers.NetworkHintsServers,
                 NetworkHintsNetwork = servers.ClientNetwork
             };
             if (servers.NetworkToken.IsNotEmpty())
@@ -953,7 +958,8 @@ public sealed class ColituVpnService
         var spare = ranked.FirstOrDefault(item => item.Id is { Length: > 0 } id
             && !string.Equals(id, target?.Id, StringComparison.OrdinalIgnoreCase)
             && !failed.Contains(id, StringComparer.OrdinalIgnoreCase)
-            && !_adaptive.IsPenalized(_networkKey, id, now));
+            && !_adaptive.IsPenalized(_networkKey, id, now)
+            && !HintedServers().Contains(id, StringComparer.OrdinalIgnoreCase));
         return spare == null ? null : new ColituSpareFetch(spare.Id!, FetchSpareServerAsync(spare, token));
     }
 
@@ -4317,6 +4323,8 @@ public sealed class ColituServersResponse
     public List<string> NetworkHintsBlocked { get; set; } = [];
     /// <summary>Protocols that worked for most devices on that network, best first (Adaptive Connect 3.0).</summary>
     public List<string> NetworkHintsPreferred { get; set; } = [];
+    /// <summary>Servers the hints call blocked in this country (an address block): tried last in automatic mode.</summary>
+    public List<string> NetworkHintsServers { get; set; } = [];
     /// <summary>The panel's Adaptive Connect 3.0 switch for this device; null when the panel did not send one.</summary>
     public bool? AdaptiveConnect3 { get; set; }
     /// <summary>The panel refused the list because the account has no active plan.</summary>
@@ -4695,6 +4703,8 @@ public sealed record ColituVpnSession
     public List<string>? NetworkHintsBlocked { get; init; }
     /// <summary>Protocols that worked for most devices on <see cref="NetworkHintsNetwork"/>, best first (stored with the blocked ones).</summary>
     public List<string>? NetworkHintsPreferred { get; init; }
+    /// <summary>Servers blocked in the country of <see cref="NetworkHintsNetwork"/> according to the panel (stored with the blocked protocols).</summary>
+    public List<string>? NetworkHintsServers { get; init; }
     public string? NetworkHintsNetwork { get; init; }
     /// <summary>The panel's Adaptive Connect 3.0 switch for this device, kept while the panel cannot be reached.</summary>
     public bool? AdaptiveConnect3Remote { get; init; }

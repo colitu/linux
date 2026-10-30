@@ -48,6 +48,7 @@ public sealed class ColituApiClient
             NetworkToken = response.NetworkToken?.Trim() is { Length: > 0 and <= 512 } token ? token : null,
             NetworkHintsBlocked = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.Blocked),
             NetworkHintsPreferred = ColituNetworkHintsPolicy.ParsePreferred(response.NetworkHints?.Preferred, response.NetworkHints?.Blocked),
+            NetworkHintsServers = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.BlockedServers),
             AdaptiveConnect3 = ColituAdaptiveConnect3.ParseFeature(response.Features)
         };
     }
@@ -1030,6 +1031,8 @@ internal sealed class ColituNetworkHintsDto
     [JsonPropertyName("blocked")] public System.Text.Json.JsonElement? Blocked { get; set; }
     /// <summary>Protocols that worked for most devices on this network, best first (Adaptive Connect 3.0).</summary>
     [JsonPropertyName("preferred")] public System.Text.Json.JsonElement? Preferred { get; set; }
+    /// <summary>Servers most devices in this country could not reach in the last hours (an address block): automatic mode tries them last.</summary>
+    [JsonPropertyName("blocked_servers")] public System.Text.Json.JsonElement? BlockedServers { get; set; }
     /// <summary>"network" (this ISP network) or "country" (too little data for the network).</summary>
     [JsonPropertyName("scope")] public string? Scope { get; set; }
     [JsonPropertyName("updated_at")] public string? UpdatedAt { get; set; }
