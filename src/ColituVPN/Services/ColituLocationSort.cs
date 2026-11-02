@@ -29,22 +29,34 @@ public static class ColituLocationSort
         };
         if (metric == null)
         {
-            return [.. groups];
+            return groups.Select(RecommendedFirst).ToList();
         }
 
         // OrderBy is stable: equal (or missing) values keep the name order of Build.
         return groups
-            .Select(group => new ColituServerGroup
+            .Select(group => RecommendedFirst(new ColituServerGroup
             {
                 Key = group.Key,
                 Name = group.Name,
                 CountryCode = group.CountryCode,
                 Servers = group.Servers.OrderBy(server => metric(server) is null).ThenBy(server => metric(server) ?? 0).ToList()
-            })
+            }))
             .OrderBy(group => Best(group, metric) is null)
             .ThenBy(group => Best(group, metric) ?? 0)
             .ToList();
     }
+
+    /// <summary>Servers the panel recommends come first inside their country; the rest keep their order (stable).</summary>
+    internal static ColituServerGroup RecommendedFirst(ColituServerGroup group) =>
+        group.IsSingle || !group.Servers.Any(server => server.Recommended)
+            ? group
+            : new ColituServerGroup
+            {
+                Key = group.Key,
+                Name = group.Name,
+                CountryCode = group.CountryCode,
+                Servers = group.Servers.OrderBy(server => server.Recommended ? 0 : 1).ToList()
+            };
 
     /// <summary>The group's best (lowest) value; null when none of its servers has one.</summary>
     private static double? Best(ColituServerGroup group, Func<ColituVpnServer, double?> metric)

@@ -106,6 +106,20 @@
                             FontWeight="SemiBold"
                             Text="{Binding Title}"
                             TextTrimming="CharacterEllipsis" />
+                        <!-- The panel recommends this server (sorted first inside its country). -->
+                        <Border
+                            Margin="8,1,0,0"
+                            Padding="7,1"
+                            VerticalAlignment="Center"
+                            Background="#268B78FF"
+                            CornerRadius="8"
+                            IsVisible="{Binding Recommended}">
+                            <TextBlock
+                                FontSize="10.5"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource LilacBrush}"
+                                Text="{Binding RecommendedText}" />
+                        </Border>
                         <!-- Ad-free YouTube on this node (service tag from the panel). -->
                         <Border
                             Margin="8,1,0,0"

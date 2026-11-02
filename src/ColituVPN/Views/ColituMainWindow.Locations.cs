@@ -128,6 +128,13 @@ public partial class ColituMainWindow
         var connectedId = _vpn.Status == ColituVpnStatus.Connected ? _vpn.ConnectedServer?.Id : null;
         var rows = new List<ColituServerRow>();
         var auto = ColituServerRow.Auto(ServerLabel(_vpn.RecommendedServer));
+        // AC4 honest list: servers unreachable with the VPN off are left out (never the connected or the picked one).
+        var unreachable = _vpn.HiddenServerIds(_servers.Concat(_vpn.MultihopRoutes).Select(server => server.Id));
+        bool IsHidden(ColituVpnServer server) => server.Id is { } id && unreachable.Contains(id);
+        // Servers in Russia: only for a Russian-language app or a network in Russia (never the connected or picked one).
+        bool RuHidden(ColituVpnServer server) =>
+            !ColituRuServers.Visible(server, Loc.I.Language, _vpn.NetworkCountry)
+            && server.Id != connectedId && !(server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection);
         if (query.Length == 0 && !filtered)
         {
             rows.Add(auto);
@@ -135,7 +142,7 @@ public partial class ColituMainWindow
 
         ColituServerRow BuildRow(ColituVpnServer server, bool city = false)
         {
-            var row = ColituServerRow.From(server, _pings.TryGetValue(server.Id ?? "", out var ping) ? ping : null, city);
+            var row = ColituServerRow.From(server, DisplayPingOf(server), city);
             row.MarkState(server.Id == connectedId, server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection);
             return row;
         }
@@ -154,10 +161,11 @@ public partial class ColituMainWindow
 
         // With a search text the matches are shown flat, so none is hidden inside a closed country.
         var flat = query.Length > 0;
-        var candidates = _servers.Where(server => (!filtered || server.Categories.Contains(_category))
+        var candidates = _servers.Where(server => !IsHidden(server) && !RuHidden(server) && (!filtered || server.Categories.Contains(_category))
             && (!flat || ColituServerRow.From(server).Matches(query)));
         var groups = ColituServerGroups.Build(candidates, ColituServerRow.CountryName, StringComparer.Create(Loc.I.Culture, true), flat);
-        foreach (var group in ColituLocationSort.Order(groups, _vpn.LocationSort, server => _pings.TryGetValue(server.Id ?? "", out var ping) ? ping : null))
+        int? PingOf(ColituVpnServer server) => DisplayPingOf(server);
+        foreach (var group in ColituLocationSort.Order(groups, _vpn.LocationSort, PingOf))
         {
             if (group.IsSingle)
             {
@@ -166,7 +174,7 @@ public partial class ColituMainWindow
             }
 
             var expanded = _expandedGroups.Contains(group.Key);
-            var best = ColituServerGroups.BestPing(group.Servers, server => _pings.TryGetValue(server.Id ?? "", out var ping) ? ping : null);
+            var best = ColituServerGroups.BestPing(group.Servers, PingOf);
             var header = ColituServerRow.Group(group, best, expanded);
             if (!expanded)
             {
@@ -185,9 +193,9 @@ public partial class ColituMainWindow
         if (!filtered && advanced)
         {
             var routes = new List<ColituServerRow>();
-            foreach (var route in _vpn.MultihopRoutes.OrderBy(s => s.Name ?? "", StringComparer.Create(Loc.I.Culture, true)))
+            foreach (var route in _vpn.MultihopRoutes.Where(route => !IsHidden(route) && !RuHidden(route)).OrderBy(s => s.Name ?? "", StringComparer.Create(Loc.I.Culture, true)))
             {
-                var row = ColituServerRow.From(route, _pings.TryGetValue(route.Id ?? "", out var ping) ? ping : null);
+                var row = ColituServerRow.From(route, PingOf(route));
                 if (query.Length > 0 && !row.Matches(query))
                 {
                     continue;
@@ -226,7 +234,7 @@ public partial class ColituMainWindow
             _renderingServers = false;
         }
 
-        LocationsSubtitle.Text = Loc.I.Format("locations.sub", ("n", _servers.Count));
+        LocationsSubtitle.Text = Loc.I.Format("locations.sub", ("n", _servers.Count(server => !IsHidden(server) && !RuHidden(server))));
         ServerListEmpty.Text = _servers.Count == 0 && query.Length == 0
             ? (_planRequired ? Loc.I["plan.noneHint"] : Loc.I["server.none"])
             : filtered && query.Length == 0 ? Loc.I["cat.empty"] : Loc.I["locations.empty"];
@@ -234,8 +242,12 @@ public partial class ColituMainWindow
     }
 
     // ── Pings ───────────────────────────────────────────────────────────────
-    /// <summary>Last measured ping per server id. The panel sends where to measure, not a number.</summary>
-    private readonly Dictionary<string, int> _pings = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// The ping a row shows, kept by the service (ColituReachability): the last measurement, or while
+    /// connected and not measurable outside the tunnel the last VPN-off one (at most 30 min old).
+    /// The panel sends where to measure, not a number.
+    /// </summary>
+    private int? DisplayPingOf(ColituVpnServer server) => _vpn.DisplayPing(server.Id);
     private DateTimeOffset _pingsMeasuredAt = DateTimeOffset.MinValue;
     private bool _measuringPings;
 
@@ -253,13 +265,10 @@ public partial class ColituMainWindow
         try
         {
             // Through the service: it keeps the results (failed pings too) for the automatic order.
-            var measured = await _vpn.MeasurePingsAsync(_servers.Concat(_vpn.MultihopRoutes).ToList());
+            await _vpn.MeasurePingsAsync(_servers.Concat(_vpn.MultihopRoutes).ToList());
             _pingsMeasuredAt = DateTimeOffset.UtcNow;
-            foreach (var (id, ms) in measured)
-            {
-                _pings[id] = ms;
-            }
-            if (_page == "locations" && measured.Count > 0)
+            // Failures too: a failed ping shows "— ms", an unreachable server leaves the list.
+            if (_page == "locations")
             {
                 RenderServers();
             }
@@ -436,6 +445,9 @@ public sealed class ColituServerRow
     /// <summary>The panel marks this node as giving ad-free YouTube.</summary>
     public bool AdFreeYoutube { get; init; }
     public string AdFreeYoutubeText => Loc.I["service.youtube_adfree"];
+    /// <summary>The panel recommends this server ("Önerilen" badge; first inside its country).</summary>
+    public bool Recommended { get; init; }
+    public string RecommendedText => Loc.I["server.recommended"];
     public int LoadLevel { get; init; }
     public string? LoadText => LoadLevel > 0 ? Loc.I[LoadLevel switch { 1 => "server.load.low", 2 => "server.load.medium", _ => "server.load.high" }] : null;
 
@@ -569,6 +581,7 @@ public sealed class ColituServerRow
             Ping = ping,
             AdBlock = ColituVpnService.HostsAdBlockDns(server.Host),
             AdFreeYoutube = server.HasAdFreeYoutube,
+            Recommended = server.Recommended,
             LoadLevel = server.Load switch
             {
                 null => 0,

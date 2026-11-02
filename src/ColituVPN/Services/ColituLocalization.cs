@@ -514,6 +514,7 @@ public sealed partial class Loc : INotifyPropertyChanged
         ["cat.torrent"] = ["Торренты", "Torrent", "Torrent"],
         ["cat.ai"] = ["ИИ", "Yapay zekâ", "AI"],
         ["cat.adblock"] = ["Блокировка рекламы", "Reklam engelleme", "Ad blocking"],
+        ["server.recommended"] = ["Рекомендуем", "Önerilen", "Recommended"],
         ["service.youtube_adfree"] = ["YouTube без рекламы", "Reklamsız YouTube", "Ad-free YouTube"],
         ["cat.empty"] = ["В этой категории пока нет серверов.", "Bu kategoride henüz sunucu yok.", "No servers in this category yet."],
 
@@ -646,6 +647,8 @@ public sealed partial class Loc : INotifyPropertyChanged
         ["settings.warmSpareHint"] = ["Второй путь готов заранее: если основной пропадёт, трафик перейдёт на него за несколько секунд без переподключения", "İkinci bir yol hazır bekler: ana yol koparsa trafik birkaç saniyede, yeniden bağlanmadan ona geçer", "A second path stands ready: if the main one drops, traffic moves to it within seconds, without reconnecting"],
         // In-app notice banner (close button label).
         ["notice.close"] = ["Закрыть уведомление", "Bildirimi kapat", "Dismiss notice"],
+        ["notice.whitelistOn"] = ["Ваш оператор работает в режиме белого списка, подключаемся к подходящему серверу.", "Operatörünüz beyaz liste modunda, uygun sunucuya geçildi.", "Your operator is in whitelist mode; switched to a suitable server."],
+        ["notice.whitelistNone"] = ["Ваш оператор работает в режиме белого списка. Подходящего сервера пока нет.", "Operatörünüz beyaz liste modunda. Uygun sunucu henüz yok.", "Your operator is in whitelist mode. No suitable server is available yet."],
         ["warn.noInternet"] = ["Похоже, пропал интернет. VPN восстановится сам, как только связь вернётся.", "İnternet bağlantınız kesilmiş görünüyor. Bağlantı gelince VPN kendiliğinden devam edecek.", "Your internet connection seems to be down. The VPN will resume on its own once it is back."],
 
         // Multihop routes and rotating IP (1.2.0)

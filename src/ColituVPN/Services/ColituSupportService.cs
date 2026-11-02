@@ -91,7 +91,17 @@ public sealed partial class ColituSupportService
 
     private static StringContent ReportContent(string report)
     {
-        var body = ColituDiagnosticsAsker.BuildUploadBody(report, ColituAuthService.ClientPlatform, ColituAuthService.ClientVersion, OsDescription());
+        System.Text.Json.Nodes.JsonObject? engine = null;
+        try
+        {
+            // AC4 engine journal, masked and size-limited on the device; never fails the report.
+            engine = ColituVpnService.Instance.EngineDiagnostics();
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituSupportService.EngineDiagnostics", ex);
+        }
+        var body = ColituDiagnosticsAsker.BuildUploadBody(engine: engine, report: report, platform: ColituAuthService.ClientPlatform, appVersion: ColituAuthService.ClientVersion, osVersion: OsDescription());
         return new StringContent(body, Encoding.UTF8, "application/json");
     }
 

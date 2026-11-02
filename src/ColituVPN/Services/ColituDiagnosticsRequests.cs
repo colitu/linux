@@ -114,15 +114,21 @@ public sealed class ColituDiagnosticsAsker
     }
 
     /// <summary>The JSON body of a report upload (for a request and for a new conversation alike).</summary>
-    public static string BuildUploadBody(string report, string platform, string? appVersion, string? osVersion)
+    /// <param name="engine">The optional AC4 <c>engine</c> section (<see cref="ColituDiagnosticsEngine"/>); left out when null.</param>
+    public static string BuildUploadBody(string report, string platform, string? appVersion, string? osVersion, System.Text.Json.Nodes.JsonObject? engine = null)
     {
-        return JsonSerializer.Serialize(new Dictionary<string, string?>
+        var body = new System.Text.Json.Nodes.JsonObject
         {
             ["report"] = report,
             ["platform"] = platform,
             ["app_version"] = appVersion,
             ["os_version"] = osVersion
-        });
+        };
+        if (engine != null)
+        {
+            body["engine"] = engine.DeepClone();
+        }
+        return body.ToJsonString();
     }
 
     /// <summary>

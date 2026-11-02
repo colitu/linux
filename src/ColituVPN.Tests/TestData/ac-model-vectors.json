@@ -1,0 +1,3537 @@
+{
+  "spec": "docs/adaptive-connect-4.md, section \"Colitu LM reference\"",
+  "tolerance": 1e-9,
+  "rng": [
+    {
+      "seed": 1,
+      "next": [
+        2005365029,
+        2916098932,
+        2657092299,
+        1495045943,
+        3031976842,
+        82049198,
+        87470069,
+        3385103793
+      ],
+      "floats": [
+        0.4669104218482971,
+        0.6789571642875671,
+        0.6186524629592896,
+        0.3480924963951111,
+        0.7059370875358582,
+        0.019103527069091797,
+        0.020365655422210693,
+        0.7881558537483215
+      ]
+    },
+    {
+      "seed": 0,
+      "next": [
+        2831543865,
+        3042595768,
+        445164014,
+        4179142836,
+        1841662163,
+        1194283324,
+        202928312,
+        1138837087
+      ],
+      "floats": [
+        0.659270167350769,
+        0.7084094882011414,
+        0.10364776849746704,
+        0.9730324745178223,
+        0.42879533767700195,
+        0.2780657410621643,
+        0.047247886657714844,
+        0.2651561498641968
+      ]
+    },
+    {
+      "seed": 2463534242,
+      "next": [
+        746858951,
+        2653896249,
+        1156348781,
+        3149294349,
+        2888432806,
+        3826506360,
+        1959669526,
+        2495235968
+      ],
+      "floats": [
+        0.1738916039466858,
+        0.6179083585739136,
+        0.2692334055900574,
+        0.733252227306366,
+        0.6725156307220459,
+        0.8909279108047485,
+        0.45627111196517944,
+        0.580967366695404
+      ]
+    }
+  ],
+  "beta_samples": [
+    {
+      "seed": 7,
+      "alpha": 1,
+      "beta": 1,
+      "expected": [
+        0.7419421823139607,
+        0.8733245472515501,
+        0.20497216398501578,
+        0.6186182966502345
+      ]
+    },
+    {
+      "seed": 7,
+      "alpha": 3,
+      "beta": 9,
+      "expected": [
+        0.3506540320035356,
+        0.4053123997120972,
+        0.12726100110293764,
+        0.29934819432084064
+      ]
+    },
+    {
+      "seed": 123456,
+      "alpha": 20,
+      "beta": 2,
+      "expected": [
+        0.9955592188968976,
+        0.908154434481194,
+        0.9824922825569503,
+        0.9366316287331917
+      ]
+    },
+    {
+      "seed": 99,
+      "alpha": 1.5,
+      "beta": 0.25,
+      "expected": [
+        0.9381407969128572,
+        1,
+        0.40483226031761366,
+        0.5435507240273523
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "latency_only",
+      "note": "No priors, no history: the fastest server wins.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.86,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.36,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0,
+          2
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "priors_beat_latency",
+      "note": "The country prior of the fastest server is bad (Beta(1,15)), a slower one is good.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {
+            "RU": {
+              "00000000-0000-4000-8000-00000000004e": {
+                "vless-reality": [
+                  1,
+                  15
+                ]
+              },
+              "00000000-0000-4000-8000-0000000000de": {
+                "vless-reality": [
+                  15,
+                  1
+                ]
+              }
+            }
+          },
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 120,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 50,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.88,
+              "own": 0.5,
+              "prior": 0.9375,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 15,
+            "beta": 1,
+            "log_odds": 2.70805020110221,
+            "score": 5.5255502011022095,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.95,
+              "own": 0.5,
+              "prior": 0.0625,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 15,
+            "log_odds": -2.70805020110221,
+            "score": -0.6955502011022099,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "star_prior_fallback",
+      "note": "No prior for the protocol: the server-level \"*\" prior is used.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "IR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {
+            "IR": {
+              "00000000-0000-4000-8000-0000000000de": {
+                "*": [
+                  2,
+                  12
+                ]
+              },
+              "00000000-0000-4000-8000-0000000000f1": {
+                "trojan": [
+                  12,
+                  2
+                ]
+              }
+            }
+          },
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "IR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "hysteria2",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "hysteria2",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 90,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.14285714285714285,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 2,
+            "beta": 12,
+            "log_odds": -1.791759469228055,
+            "score": 0.281097673629088,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.91,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.41,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "own_history",
+      "note": "This device failed twice on the fast server and worked three times on the slower one.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": [
+              {
+                "age_h": 2,
+                "ok": false
+              },
+              {
+                "age_h": 3,
+                "ok": false
+              }
+            ]
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 110,
+            "history": [
+              {
+                "age_h": 1,
+                "ok": true
+              },
+              {
+                "age_h": 5,
+                "ok": true
+              },
+              {
+                "age_h": 20,
+                "ok": true
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.253006858183002,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 2.952462028822521,
+            "log_odds": -1.082639408319982,
+            "score": 0.9868708789545211,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.89,
+              "own": 0.7902809767955445,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 3.768284654011086,
+            "beta": 1,
+            "log_odds": 1.3266198989804427,
+            "score": 4.152041364173759,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "history_decay",
+      "note": "Failures 300+ h old weigh 2^(-300/72) ≈ 0.056 each; one recent success outweighs them.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": [
+              {
+                "age_h": 300,
+                "ok": false
+              },
+              {
+                "age_h": 320,
+                "ok": false
+              },
+              {
+                "age_h": 340,
+                "ok": false
+              },
+              {
+                "age_h": 2,
+                "ok": true
+              }
+            ]
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.6348268825612103,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1.980930087668915,
+            "beta": 1.139495562355307,
+            "log_odds": 0.552980800342315,
+            "score": 3.1952211241841306,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4299999999999997,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "hint_blocked",
+      "note": "The fastest server is in blocked_servers for the country.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 90,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": true,
+            "load": "low",
+            "latency_ms": 40,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.91,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.41,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.96,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 1,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 0.45999999999999996,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "recommended_bonus",
+      "note": "A recommended server 15 ms slower wins by the small bonus.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": true,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 85,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4299999999999997,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.915,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 1,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.665,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "load_penalty",
+      "note": "A highly loaded fast server loses to a lightly loaded one.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "high",
+            "latency_ms": 50,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.95,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 1,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 1.9500000000000002,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "protocol_fit_cellular",
+      "note": "One server, two protocols: on cellular hysteria2 fits better.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {
+            "cellular": {
+              "hysteria2": 0.92,
+              "vless-reality": 0.41
+            },
+            "wifi": {
+              "hysteria2": 0.6,
+              "vless-reality": 0.95
+            }
+          },
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "hysteria2",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.41,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.375,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.92,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.63,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "protocol_fit_wifi",
+      "note": "The same server on wifi: vless-reality fits better.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {
+            "cellular": {
+              "hysteria2": 0.92,
+              "vless-reality": 0.41
+            },
+            "wifi": {
+              "hysteria2": 0.6,
+              "vless-reality": 0.95
+            }
+          },
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "hysteria2",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.95,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.645,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.6,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4699999999999998,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "protocol_fit_unknown_network",
+      "note": "Unknown network type: every protocol fits 0.5.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {
+            "cellular": {
+              "hysteria2": 0.92,
+              "vless-reality": 0.41
+            },
+            "wifi": {
+              "hysteria2": 0.6,
+              "vless-reality": 0.95
+            }
+          },
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "hysteria2",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "latency_unknown",
+      "note": "VPN on, no measurement: latency feature 0 for all; priors decide.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {
+            "TR": {
+              "00000000-0000-4000-8000-0000000000f1": {
+                "vless-reality": [
+                  9,
+                  3
+                ]
+              }
+            }
+          },
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": null,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": null,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 1.5,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0,
+              "own": 0.5,
+              "prior": 0.75,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 9,
+            "beta": 3,
+            "log_odds": 1.09861228866811,
+            "score": 2.84861228866811,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "latency_over_cap",
+      "note": "1500 ms is over the 1000 ms cap: feature 0, as for 1000 ms.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 1500,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 1000,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 1.5,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 1.5,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "stale_model",
+      "note": "A model fetched 30 h ago is stale but still used (offline).",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 30,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": true,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.86,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.36,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0,
+          2
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "no_model",
+      "note": "No model fetched yet: Adaptive Connect 3 rules (engine ac3).",
+      "input": {
+        "model": null,
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac3",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": null,
+        "ranking": null,
+        "choice": null
+      }
+    },
+    {
+      "name": "engine_disabled",
+      "note": "features.ac_engine_4 is false: engine ac3 even with a model.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": false,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac3",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": null,
+        "ranking": null,
+        "choice": null
+      }
+    },
+    {
+      "name": "unknown_model_version",
+      "note": "A model version the app does not know: engine ac3.",
+      "input": {
+        "model": {
+          "version": 2,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac3",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": null,
+        "ranking": null,
+        "choice": null
+      }
+    },
+    {
+      "name": "ru_plain_never_auto",
+      "note": "A plain RU server (RU entry, RU exit) is never chosen automatically, even when it scores best.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {
+            "RU": {
+              "00000000-0000-4000-8000-0000000000a1": {
+                "vless-reality": [
+                  19,
+                  1
+                ]
+              }
+            }
+          },
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 10,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 90,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.99,
+              "own": 0.5,
+              "prior": 0.95,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 19,
+            "beta": 1,
+            "log_odds": 2.9444389791664403,
+            "score": 5.88443897916644,
+            "eligible": false,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.91,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.41,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "ru_only_no_choice",
+      "note": "Only plain RU servers: nothing is eligible, choice is null.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 10,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a2",
+            "protocol": "trojan",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 20,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.99,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.49,
+            "eligible": false,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.98,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.48,
+            "eligible": false,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [],
+        "choice": null
+      }
+    },
+    {
+      "name": "bridge_allowed",
+      "note": "A bridge (RU entry, DE exit) may be chosen automatically.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000b1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 25,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 90,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.975,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.475,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.91,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.41,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "whitelist_bridge_first",
+      "note": "Whitelist mode: only whitelist_ok candidates; the bridge comes before the faster plain RU server.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": true,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 30,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 15,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000b1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "DE",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.97,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4699999999999998,
+            "eligible": false,
+            "tier": 1,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.985,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.485,
+            "eligible": true,
+            "tier": 1,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          2,
+          1
+        ],
+        "choice": 2
+      }
+    },
+    {
+      "name": "whitelist_plain_ru",
+      "note": "Whitelist mode without a bridge: a whitelist_ok RU server may be chosen; non-whitelist servers are not.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": true,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 30,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 15,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.97,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4699999999999998,
+            "eligible": false,
+            "tier": 1,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.985,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.485,
+            "eligible": true,
+            "tier": 1,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "whitelist_none_flagged",
+      "note": "Whitelist mode but no whitelist_ok server: whitelist_none, normal rules (RU still excluded).",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": true,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 30,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 10,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": true,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.97,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4699999999999998,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.99,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.49,
+            "eligible": false,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "explore_thompson",
+      "note": "The first draw is under explore (0.05): Thompson samples decide.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 22,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": true,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.504220649368836
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.3169136275599945
+          },
+          {
+            "features": {
+              "latency": 0.86,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.36,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.7765018028711816
+          }
+        ],
+        "ranking": [
+          1,
+          0,
+          2
+        ],
+        "choice": 2
+      }
+    },
+    {
+      "name": "explore_thompson_2",
+      "note": "Another exploring seed.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 53,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": true,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": 1
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.16681312552400995
+          },
+          {
+            "features": {
+              "latency": 0.86,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.36,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.39441458989884537
+          }
+        ],
+        "ranking": [
+          1,
+          0,
+          2
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "explore_whitelist_top_tier",
+      "note": "Exploration samples only the best tier: the two bridges, not the RU server.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": true,
+        "seed": 22,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000a1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "RU",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 15,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000b1",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "DE",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000b2",
+            "protocol": "vless-reality",
+            "entry_country": "RU",
+            "exit_country": "NL",
+            "whitelist_ok": true,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": true,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.985,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.485,
+            "eligible": true,
+            "tier": 1,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.3169136275599945
+          },
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 1
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 3.4299999999999997,
+            "eligible": true,
+            "tier": 0,
+            "theta": 0.504220649368836
+          }
+        ],
+        "ranking": [
+          1,
+          2,
+          0
+        ],
+        "choice": 2
+      }
+    },
+    {
+      "name": "seed_zero",
+      "note": "Seed 0 is replaced by 0x9E3779B9.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 0,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 80,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 60,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000f1",
+            "protocol": "vless-reality",
+            "entry_country": "FI",
+            "exit_country": "FI",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 140,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.92,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.42,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.94,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.44,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.86,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.36,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0,
+          2
+        ],
+        "choice": 1
+      }
+    },
+    {
+      "name": "tie_break_by_key",
+      "note": "Equal scores: the smaller (node_id, protocol) comes first.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "TR",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {},
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "TR",
+        "network_type": "wifi",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 70,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4299999999999997,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.9299999999999999,
+              "own": 0.5,
+              "prior": 0.5,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 1,
+            "beta": 1,
+            "log_odds": 0,
+            "score": 2.4299999999999997,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          0,
+          1
+        ],
+        "choice": 0
+      }
+    },
+    {
+      "name": "city_scope_priors",
+      "note": "City priors: NL is blocked in the caller's city (BlockPrior(9,1)), so DE wins although NL is faster.",
+      "input": {
+        "model": {
+          "version": 1,
+          "generated_at": "2026-11-02T03:00:00Z",
+          "country": "RU",
+          "weights": {
+            "latency": 1,
+            "own": 1.5,
+            "prior": 1,
+            "hint": -2,
+            "recommended": 0.25,
+            "load": -0.5,
+            "protocol_fit": 0.5,
+            "whitelist": 1
+          },
+          "priors": {
+            "RU": {
+              "00000000-0000-4000-8000-00000000004e": {
+                "*": [
+                  3,
+                  17
+                ],
+                "vless-reality": [
+                  3,
+                  17
+                ]
+              },
+              "00000000-0000-4000-8000-0000000000de": {
+                "vless-reality": [
+                  12,
+                  3
+                ]
+              }
+            }
+          },
+          "protocol_fit": {},
+          "explore": 0.05,
+          "halflife_h": 72,
+          "latency_cap_ms": 1000,
+          "city": "Moscow",
+          "prior_scope": {
+            "RU": {
+              "00000000-0000-4000-8000-00000000004e": {
+                "scope": "city",
+                "city": "Moscow"
+              },
+              "00000000-0000-4000-8000-0000000000de": {
+                "scope": "country"
+              }
+            }
+          }
+        },
+        "model_age_h": 1,
+        "engine_enabled": true,
+        "country": "RU",
+        "network_type": "cellular",
+        "whitelist_mode": false,
+        "seed": 1,
+        "candidates": [
+          {
+            "node_id": "00000000-0000-4000-8000-00000000004e",
+            "protocol": "vless-reality",
+            "entry_country": "NL",
+            "exit_country": "NL",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 50,
+            "history": null
+          },
+          {
+            "node_id": "00000000-0000-4000-8000-0000000000de",
+            "protocol": "vless-reality",
+            "entry_country": "DE",
+            "exit_country": "DE",
+            "whitelist_ok": false,
+            "recommended": false,
+            "hint_blocked": false,
+            "load": "low",
+            "latency_ms": 90,
+            "history": null
+          }
+        ]
+      },
+      "expected": {
+        "engine": "ac4",
+        "stale": false,
+        "explored": false,
+        "whitelist_none": false,
+        "candidates": [
+          {
+            "features": {
+              "latency": 0.95,
+              "own": 0.5,
+              "prior": 0.15,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 3,
+            "beta": 17,
+            "log_odds": -1.7346010553881066,
+            "score": 0.36539894461189304,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          },
+          {
+            "features": {
+              "latency": 0.91,
+              "own": 0.5,
+              "prior": 0.8,
+              "hint": 0,
+              "recommended": 0,
+              "load": 0,
+              "protocol_fit": 0.5,
+              "whitelist": 0
+            },
+            "alpha": 12,
+            "beta": 3,
+            "log_odds": 1.3862943611198908,
+            "score": 4.096294361119891,
+            "eligible": true,
+            "tier": 0,
+            "theta": null
+          }
+        ],
+        "ranking": [
+          1,
+          0
+        ],
+        "choice": 1
+      }
+    }
+  ]
+}

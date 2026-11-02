@@ -54,6 +54,25 @@ public sealed class ColituVpnService
     private readonly ColituAdaptiveMemory _adaptive = new();
     /// <summary>Last ping of each server (failed ones too), with the network it was taken on.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ColituPingSample> _pings = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>AC4 honest list: unreachable servers (VPN-off rounds) and the ping a row shows.</summary>
+    private readonly ColituReachability _reachability = new();
+    /// <summary>AC4: the last decision model from the panel (6 h, stale one kept offline).</summary>
+    private readonly ColituLmModelStore _lmModel = new(Utils.GetConfigPath("colitu-ac-model.json"));
+    /// <summary>AC4: this device's outcomes per (network hash, server, protocol); never leaves the device.</summary>
+    private readonly ColituLmHistory _lmHistory = new(Utils.GetConfigPath("colitu-lm-history.json"));
+    /// <summary>AC4 exploration seed: a new one per automatic connect, so the list shows what the connect will use.</summary>
+    private uint _lmSeed = ColituLm.RandomSeed();
+    /// <summary>AC4: the protocol the decision chose for its server (tried first there); null for none.</summary>
+    private (string ServerId, string Protocol)? _lmLead;
+    /// <summary>Engine of the last automatic order: "ac4" or "ac3".</summary>
+    private string _lastOrderEngine = ColituLm.EngineAc3;
+    /// <summary>AC4 whitelist mode (mobile operator whitelist detected).</summary>
+    private volatile bool _whitelistMode;
+    private int _whitelistChecking;
+    private long _whitelistCheckedAt;
+    private System.Threading.Timer? _whitelistTimer;
+    /// <summary>Connects that failed in a row (offline ones too): two start a whitelist check.</summary>
+    private int _connectFailuresInRow;
     /// <summary>Network key of the current connect / tunnel: stall marks and penalties are filed under it.</summary>
     private string _networkKey = ColituAdaptiveConnect.NetworkKey("other", null);
     private string? _linkKind;
@@ -272,8 +291,334 @@ public sealed class ColituVpnService
     public ColituVpnServer? RecommendedServer => RankedServers().FirstOrDefault();
 
     /// <summary>The order automatic mode tries the servers in on the current network (see <see cref="ColituAdaptiveConnect.Rank"/>).</summary>
-    public List<ColituVpnServer> RankedServers() =>
-        ColituAdaptiveConnect.Rank(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow, HintedServers());
+    public List<ColituVpnServer> RankedServers() => RankedServers(forConnect: false);
+
+    /// <summary>
+    /// With <c>features.ac_engine_4</c> on and a model fetched, the AC4 decision model orders the
+    /// servers; otherwise (flag off, no model, unknown model version) the AC 3 rules do, unchanged.
+    /// <paramref name="forConnect"/>: the decision is journaled and its protocol leads on its server.
+    /// </summary>
+    private List<ColituVpnServer> RankedServers(bool forConnect)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var network = CurrentNetworkKey();
+        if (AcEngine4Enabled && DecideAc4(network, now, forConnect) is { } ordered)
+        {
+            return ordered;
+        }
+        if (forConnect)
+        {
+            _lastOrderEngine = ColituLm.EngineAc3;
+        }
+        return ColituAdaptiveConnect.Rank(AutoCandidates(), _pings, _adaptive, network, _session.ClientCountry, now, HintedServers());
+    }
+
+    /// <summary>The panel's Adaptive Connect 4 switch for this device (kept while the panel cannot be reached).</summary>
+    public bool AcEngine4Enabled => _session.AcEngine4Remote == true;
+
+    /// <summary>AC4 whitelist mode is on (the operator lets only allowed addresses through).</summary>
+    public bool WhitelistMode => _whitelistMode;
+
+    /// <summary>Country of this device's network as the panel last saw it with the VPN off.</summary>
+    public string? NetworkCountry => _session.ClientCountry;
+
+    /// <summary>The AC4 order, or null when the AC 3 rules apply (no model yet, unknown version).</summary>
+    private List<ColituVpnServer>? DecideAc4(string network, DateTimeOffset now, bool forConnect)
+    {
+        var servers = AutoCandidates();
+        // Connected and not measurable pinned: the tunnel ping (display value) stands in, marked "tunnel".
+        var tunnelLatency = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int? Latency(ColituVpnServer server)
+        {
+            if (server.Id == null)
+            {
+                return null;
+            }
+            if (_pings.TryGetValue(server.Id, out var sample) && sample.EffectiveMs(network, now) is { } ms)
+            {
+                return ms;
+            }
+            if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting && _reachability.TunnelPing(server.Id, now) is { } tunnelMs)
+            {
+                tunnelLatency.Add(server.Id);
+                return tunnelMs;
+            }
+            return null;
+        }
+        var pairs = ColituLmPlanner.Candidates(servers, Latency, HintedServers(), (id, protocol) => _lmHistory.Outcomes(network, id, protocol, now),
+            _whitelistMode, _session.ClientCountry);
+        var input = new ColituLmInput
+        {
+            Model = _lmModel.Model,
+            ModelAgeH = _lmModel.AgeH(now),
+            EngineEnabled = true,
+            Country = _session.ClientCountry ?? "",
+            NetworkType = InsightNetworkType,
+            WhitelistMode = _whitelistMode,
+            Seed = _lmSeed,
+            Candidates = pairs.Select(pair => pair.Candidate).ToList()
+        };
+        var decision = ColituLm.Decide(input);
+        if (decision.Engine != ColituLm.EngineAc4)
+        {
+            // No model yet: AC 3 rules, except that whitelist mode keeps to the whitelist servers.
+            var whitelist = _whitelistMode ? ColituLmPlanner.WhitelistOrder(servers, Latency, _session.ClientCountry) : [];
+            if (forConnect)
+            {
+                _lmLead = null;
+                _lastOrderEngine = ColituLm.EngineAc3;
+                JournalDecision(input, decision, pairs, null, whitelist.Count > 0 ? "ac3_whitelist" : _lmModel.Model == null ? "ac3_no_model" : "ac3_model_version", tunnelLatency);
+            }
+            return whitelist.Count > 0 ? whitelist : null;
+        }
+        var (order, lead) = ColituLmPlanner.Order(decision, pairs);
+        if (forConnect)
+        {
+            _lastOrderEngine = ColituLm.EngineAc4;
+            _lmLead = order.FirstOrDefault()?.Id is { } first && lead != null ? (first, lead) : null;
+            var reason = decision.Choice == null ? "no_eligible" : decision.Explored ? "explore" : _whitelistMode && !decision.WhitelistNone ? "whitelist" : "score";
+            JournalDecision(input, decision, pairs, decision.Choice, reason, tunnelLatency);
+            if (decision.Stale)
+            {
+                _ = RefreshAcModelIfDueAsync();
+            }
+        }
+        return order;
+    }
+
+    private void JournalDecision(ColituLmInput input, ColituLmDecision decision, IReadOnlyList<(ColituLmCandidate Candidate, ColituVpnServer Server)> pairs, int? choice, string reason,
+        IReadOnlySet<string>? tunnelLatency = null)
+    {
+        ColituEngineJournal.Instance.Add(ColituEngineJournal.Decision, new
+        {
+            engine = decision.Engine,
+            reason,
+            model_version = input.Model?.Version,
+            model_generated_at = input.Model?.GeneratedAt,
+            model_city = input.Model?.City,
+            model_age_h = Math.Round(input.ModelAgeH, 2),
+            stale = decision.Stale,
+            explored = decision.Explored,
+            whitelist_mode = input.WhitelistMode,
+            whitelist_none = decision.WhitelistNone,
+            flags = new { ac_engine_4 = AcEngine4Enabled, adaptive_connect_3 = _session.AdaptiveConnect3Remote },
+            country = input.Country,
+            network_type = input.NetworkType,
+            seed = input.Seed,
+            candidates = pairs.Select((pair, index) => new
+            {
+                node_id = pair.Candidate.NodeId,
+                protocol = pair.Candidate.Protocol,
+                entry = pair.Candidate.EntryCountry,
+                exit = pair.Candidate.ExitCountry,
+                latency_ms = pair.Candidate.LatencyMs,
+                latency_source = tunnelLatency?.Contains(pair.Candidate.NodeId) == true ? "tunnel" : null,
+                history = pair.Candidate.History?.Count ?? 0,
+                scope = input.Model?.ScopeOf(input.Country, pair.Candidate.NodeId),
+                scored = decision.Candidates is { } scored && index < scored.Count ? scored[index] : null
+            }).ToList(),
+            ranking = decision.Ranking,
+            choice = choice is { } chosen && chosen < pairs.Count ? new { node_id = pairs[chosen].Candidate.NodeId, protocol = pairs[chosen].Candidate.Protocol } : null
+        });
+    }
+
+    /// <summary>
+    /// The <c>engine</c> section of the support report: the journal, the servers the list hides now,
+    /// the model version and the switches (masked and size-limited by <see cref="ColituDiagnosticsEngine"/>).
+    /// </summary>
+    public System.Text.Json.Nodes.JsonObject? EngineDiagnostics()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var hidden = HiddenServerIds(_lastServers.Select(server => server.Id));
+        var hiddenNow = _lastServers
+            .Where(server => server.Id != null && hidden.Contains(server.Id))
+            .Select(server => (object)new
+            {
+                kind = "hidden_now",
+                node_id = server.Id,
+                name = server.Name,
+                country = server.CountryCode,
+                multihop = server.IsMultihop,
+                reason = "unreachable_vpn_off"
+            })
+            .ToList();
+        var model = _lmModel.Model;
+        var flags = new Dictionary<string, object?>
+        {
+            ["ac_engine_4"] = AcEngine4Enabled,
+            ["adaptive_connect_3"] = _session.AdaptiveConnect3Remote,
+            ["whitelist_mode"] = _whitelistMode,
+            ["engine"] = AcEngine4Enabled && model?.Version == ColituLm.FormatVersion ? ColituLm.EngineAc4 : ColituLm.EngineAc3,
+            ["model_country"] = model?.Country,
+            ["model_city"] = model?.City,
+            ["prior_scope_city"] = model?.ScopeCounts(model.Country).City,
+            ["prior_scope_country"] = model?.ScopeCounts(model.Country).Country,
+            ["model_age_h"] = model == null ? null : Math.Round(_lmModel.AgeH(now), 2),
+            ["model_stale"] = model != null && _lmModel.AgeH(now) > ColituLm.StaleAfterH,
+            ["explore"] = model?.Explore,
+            ["halflife_h"] = model?.HalflifeH,
+            ["network_type"] = ColituAcSpec.NetworkType(_linkKind),
+            ["network_country"] = _session.ClientCountry,
+            ["history_records"] = _lmHistory.Count,
+            ["servers"] = _lastServers.Count,
+            ["whitelist_servers"] = _lastServers.Count(server => server.WhitelistOk),
+            ["status"] = Status.ToString()
+        };
+        var version = model == null ? null
+            : $"{model.Version}{(model.GeneratedAt is { Length: > 0 } at ? $" {at}" : "")}{(model.City is { Length: > 0 } city ? $" {model.Country}/{city}" : "")}";
+        return ColituDiagnosticsEngine.Build(ColituEngineJournal.Instance.Snapshot(), hiddenNow, version, flags, KnownServerHosts());
+    }
+
+    /// <summary>One outcome of this device with a server and protocol on the current network (AC4 history + journal).</summary>
+    private void RecordLmOutcome(string? serverId, string? protocol, bool ok, string? reason = null)
+    {
+        if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(protocol) || ColituAcSpec.NodeId(serverId) == null)
+        {
+            return;
+        }
+        _lmHistory.Record(_networkKey, serverId, protocol, ok, DateTimeOffset.UtcNow);
+        ColituEngineJournal.Instance.Add(ColituEngineJournal.Outcome, new { node_id = serverId, protocol, outcome = ok ? "ok" : "fail", reason });
+    }
+
+    /// <summary>Fetches the AC4 model when it is due (none, older than 6 h, another country); never throws.</summary>
+    private async Task RefreshAcModelIfDueAsync()
+    {
+        if (!AcEngine4Enabled || !_lmModel.TakeFetchSlot(DateTimeOffset.UtcNow, _session.ClientCountry))
+        {
+            return;
+        }
+        try
+        {
+            // With the VPN off the panel takes the country from the request; through the tunnel from the token.
+            var model = await _api.GetAcModelAsync(Status == ColituVpnStatus.Disconnected ? null : CurrentNetworkToken());
+            if (model != null)
+            {
+                _lmModel.Set(model, DateTimeOffset.UtcNow);
+                LogConnection($"Adaptive Connect 4 model fetched: version {model.Version}, country {(model.Country is { Length: > 0 } c ? c : "-")}{(model.City is { Length: > 0 } city ? $", city {city}" : "")}, generated {model.GeneratedAt}");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Adaptive Connect 4 model fetch failed ({ex.GetType().Name}); {(_lmModel.Model != null ? "the stale model stays" : "AC 3 rules until it comes")}");
+        }
+    }
+
+    /// <summary>A connect failed: the second in a row starts a whitelist check (AC4, VPN off by then).</summary>
+    private void NoteConnectFailure()
+    {
+        if (Interlocked.Increment(ref _connectFailuresInRow) >= 2 && AcEngine4Enabled)
+        {
+            _ = Task.Run(() => CheckWhitelistAsync("two connection failures in a row", afterFailures: true));
+        }
+    }
+
+    /// <summary>
+    /// One whitelist check (≤ 4 s, TCP 443 to the foreign and domestic sets, outside the tunnel). On
+    /// entering whitelist mode: a notice, the ac-event, a re-check every 5 minutes and, after two failed
+    /// connects in automatic mode, a connect to the best whitelist server. Without any flagged server
+    /// only the notice and the log. It ends when the foreign set works again. Never throws.
+    /// </summary>
+    private async Task CheckWhitelistAsync(string reason, bool afterFailures)
+    {
+        if (!AcEngine4Enabled || Status == ColituVpnStatus.Connecting || Interlocked.Exchange(ref _whitelistChecking, 1) == 1)
+        {
+            return;
+        }
+        try
+        {
+            var nowTicks = Environment.TickCount64;
+            // Outside the 5-minute re-check, at most one check a minute (ping rounds can be frequent).
+            if (!afterFailures && reason != "re-check" && nowTicks - Interlocked.Read(ref _whitelistCheckedAt) < 60_000)
+            {
+                return;
+            }
+            Interlocked.Exchange(ref _whitelistCheckedAt, nowTicks);
+            var domestic = ColituWhitelist.DomesticSet(_session.WhitelistProbe, _session.ClientCountry);
+            if (domestic.Count == 0)
+            {
+                LogConnection($"Whitelist check skipped ({reason}): no domestic hosts for country {(_session.ClientCountry ?? "-")}");
+                return;
+            }
+            var foreign = ColituWhitelist.ForeignSet(_lastServers, server => DisplayPing(server.Id));
+            var vpnUp = Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting;
+            var check = await ColituWhitelist.CheckAsync(foreign, domestic, ColituNetwork.ProbeInterfaceName(), requirePin: vpnUp);
+            if (check == null)
+            {
+                LogConnection($"Whitelist check skipped ({reason}): the probes cannot be kept outside the tunnel");
+                return;
+            }
+            var was = _whitelistMode;
+            var next = ColituWhitelist.NextState(was, check);
+            LogConnection($"Whitelist check ({reason}): foreign {check.ForeignOk}/{check.ForeignTotal}, domestic {check.DomesticOk}/{check.DomesticTotal}, {check.Ms} ms -> {(next ? "whitelist mode" : "normal")}");
+            ColituEngineJournal.Instance.Add(ColituEngineJournal.Whitelist, new
+            {
+                reason,
+                foreign_ok = check.ForeignOk,
+                foreign_total = check.ForeignTotal,
+                domestic_ok = check.DomesticOk,
+                domestic_total = check.DomesticTotal,
+                ms = check.Ms,
+                was,
+                state = next ? "on" : "off",
+                flag = check.Flag(next)
+            });
+            if (next == was)
+            {
+                return;
+            }
+            _whitelistMode = next;
+            ColituInsights.Instance.AddEvent(new ColituAcEvent
+            {
+                Kind = "whitelist",
+                State = next ? "on" : "off",
+                ForeignOk = check.ForeignOk,
+                ForeignTotal = check.ForeignTotal,
+                DomesticOk = check.DomesticOk,
+                DomesticTotal = check.DomesticTotal,
+                Ms = check.Ms
+            });
+            if (!next)
+            {
+                _whitelistTimer?.Dispose();
+                _whitelistTimer = null;
+                LogConnection("Whitelist mode ended: the foreign hosts answer again");
+                StatusChanged?.Invoke(Status);
+                return;
+            }
+            _whitelistTimer?.Dispose();
+            _whitelistTimer = new System.Threading.Timer(_ => _ = CheckWhitelistAsync("re-check", afterFailures: false), null, ColituWhitelist.RecheckEvery, ColituWhitelist.RecheckEvery);
+            var flagged = _lastServers.Count(server => server.WhitelistOk && server.Available
+                && (!server.IsMultihop || ColituLmPlanner.WhitelistRoute(server, _session.ClientCountry)));
+            if (flagged == 0)
+            {
+                LogConnection("Whitelist mode: no server is flagged whitelist_ok; notice only");
+                Notice?.Invoke("notice.whitelistNone");
+                return;
+            }
+            LogConnection($"Whitelist mode: automatic mode uses the {flagged} whitelist server(s), bridges first");
+            Notice?.Invoke("notice.whitelistOn");
+            if (afterFailures && IsAutoSelection && !_userDisconnected && Status is ColituVpnStatus.Error or ColituVpnStatus.Disconnected)
+            {
+                try
+                {
+                    await ConnectAsync(null);
+                }
+                catch (Exception ex)
+                {
+                    LogConnection($"Whitelist mode: connecting to a whitelist server failed ({ex.GetType().Name})");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Whitelist check failed: {ex.GetType().Name}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _whitelistChecking, 0);
+        }
+    }
+
 
     /// <summary>Servers the panel hints as blocked in this country, for the network the hints came on.</summary>
     private IReadOnlyCollection<string> HintedServers() =>
@@ -285,10 +630,14 @@ public sealed class ColituVpnService
     /// </summary>
     public async Task<Dictionary<string, int>> MeasurePingsAsync(IReadOnlyCollection<ColituVpnServer> servers)
     {
-        if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting && string.IsNullOrEmpty(ColituNetwork.PhysicalInterfaceName()))
+        // Only a round taken with nothing of the VPN up decides which servers are unreachable.
+        var vpnOff = Status == ColituVpnStatus.Disconnected;
+        if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting && string.IsNullOrEmpty(ColituNetwork.ProbeInterfaceName()))
         {
             // With the tunnel up a probe that cannot be bound to the physical interface goes through the
-            // tunnel and measures the distance to the exit, not to the server. Keep the old numbers.
+            // tunnel and measures the distance to the exit, not to the server. The list shows the last
+            // VPN-off pings instead (ColituReachability), else a display-only ping through the tunnel.
+            await MeasureTunnelPingsAsync(servers.Where(ColituLatency.CanProbe).DistinctBy(item => item.Id, StringComparer.OrdinalIgnoreCase).ToList());
             return [];
         }
         var network = CurrentNetworkKey();
@@ -296,8 +645,10 @@ public sealed class ColituVpnService
         var at = DateTimeOffset.UtcNow;
         await RefreshPingRouteTargetsAsync(servers, TimeSpan.FromSeconds(1));
         // Only the servers that were measured (at most ColituLatency.MaxServers): the rest keep their old ping.
+        var dialled = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
         foreach (var server in servers.Where(ColituLatency.CanProbe).DistinctBy(item => item.Id, StringComparer.OrdinalIgnoreCase).Take(ColituLatency.MaxServers))
         {
+            dialled[server.Id!] = measured.TryGetValue(server.Id!, out var dialledMs) ? dialledMs : null;
             _pings[server.Id!] = new ColituPingSample(measured.TryGetValue(server.Id!, out var ms) ? ms : null, at, network);
             // Every measurement is a probe event (the last one of each hour per node is kept); routes are not nodes.
             if (!server.IsMultihop)
@@ -311,8 +662,103 @@ public sealed class ColituVpnService
                 });
             }
         }
+        _reachability.RecordRound(dialled, vpnOff, at);
+        var failedCount = dialled.Count(item => item.Value == null);
+        ColituEngineJournal.Instance.Add(ColituEngineJournal.PingRound, new
+        {
+            vpn_off = vpnOff,
+            connected = Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting,
+            total = dialled.Count,
+            ok = dialled.Count - failedCount,
+            failed = failedCount,
+            unpinned = 0,
+            path = "pinned"
+        }, at);
+        if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting)
+        {
+            // Not measurable bound to the interface and no VPN-off ping of the last 30 min: a display-only
+            // ping through the tunnel, so the row does not say "— ms" for a server that is alive.
+            await MeasureTunnelPingsAsync(dialled.Keys
+                .Where(id => _reachability.NeedsTunnelPing(id, measured.ContainsKey(id), at))
+                .Select(id => servers.First(server => string.Equals(server.Id, id, StringComparison.OrdinalIgnoreCase)))
+                .ToList());
+        }
+        if (vpnOff)
+        {
+            var hidden = _reachability.Hidden(dialled.Keys, ReachabilityKeep());
+            if (hidden.Count > 0)
+            {
+                LogConnection($"Unreachable with the VPN off (hidden from the list and the automatic choice): {hidden.Count}/{dialled.Count}");
+                ColituEngineJournal.Instance.Add(ColituEngineJournal.Hidden, new { reason = "unreachable_vpn_off", servers = hidden.Order(StringComparer.OrdinalIgnoreCase).ToList(), of = dialled.Count }, at);
+            }
+            // Most servers fail with the VPN off: the network may let only whitelisted addresses through.
+            if (AcEngine4Enabled && dialled.Count >= 2 && failedCount * 2 >= dialled.Count)
+            {
+                _ = CheckWhitelistAsync("most servers unreachable with the VPN off", afterFailures: false);
+            }
+        }
         return measured;
     }
+
+    /// <summary>
+    /// Display-only pings through the tunnel (<see cref="ColituTunnelPing"/>) for servers without any
+    /// other ping while connected. Recorded with the "tunnel" mark: shown in the list, used as the AC4
+    /// latency feature (journaled as tunnel), never in the hiding decision. Never throws.
+    /// </summary>
+    private async Task MeasureTunnelPingsAsync(IReadOnlyCollection<ColituVpnServer> targets)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var needed = targets.Where(server => !_reachability.HasRecentOffPing(server.Id, now)).ToList();
+        if (needed.Count == 0 || Status is not (ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting))
+        {
+            return;
+        }
+        try
+        {
+            var (port, credentials) = TunnelCheckTarget();
+            var results = await ColituTunnelPing.MeasureAsync(needed, port, credentials).WaitAsync(TimeSpan.FromSeconds(15));
+            var at = DateTimeOffset.UtcNow;
+            _reachability.RecordTunnel(results, at);
+            var ok = results.Count(result => result.Value != null);
+            LogConnection($"Bound pings missed {needed.Count} server(s) without a VPN-off ping of the last 30 min: measured through the tunnel (display only, never hides): {ok} ok");
+            ColituEngineJournal.Instance.Add(ColituEngineJournal.PingRound, new
+            {
+                vpn_off = false,
+                connected = true,
+                path = "tunnel",
+                total = results.Count,
+                ok,
+                failed = results.Count - ok
+            }, at);
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Pings through the tunnel failed: {ex.GetType().Name}");
+        }
+    }
+
+    /// <summary>The ping a location row shows (see <see cref="ColituReachability.DisplayPing"/>); null shows "— ms".</summary>
+    public int? DisplayPing(string? serverId) =>
+        _reachability.DisplayPing(serverId, Status != ColituVpnStatus.Disconnected, DateTimeOffset.UtcNow);
+
+    /// <summary>
+    /// Servers (and routes) the list hides: unreachable in two VPN-off rounds in a row, after the
+    /// safeguards; never the connected server or the one being connected to / picked.
+    /// </summary>
+    public HashSet<string> HiddenServerIds(IEnumerable<string?> ids, IEnumerable<string?>? keep = null) =>
+        _reachability.Hidden(ids, ReachabilityKeep().Concat(keep ?? []));
+
+    /// <summary>The connected server and the one being connected to: never hidden.</summary>
+    private List<string?> ReachabilityKeep() =>
+    [
+        ConnectedServer?.Id,
+        Status is ColituVpnStatus.Disconnected ? null : SelectedServer?.Id,
+        SavedServerId
+    ];
+
+    /// <summary>What the automatic choice ranks: the list without the unreachable servers (<see cref="ColituReachability"/>).</summary>
+    private List<ColituVpnServer> AutoCandidates() =>
+        _reachability.Visible(_lastServers, server => server.Id, [ConnectedServer?.Id]);
 
     /// <summary>
     /// Automatic mode ranks the servers by ping, and a ping is only believed for ten minutes on the
@@ -371,6 +817,14 @@ public sealed class ColituVpnService
             // Through the VPN too: the switch belongs to the device, not to the network.
             session = session with { AdaptiveConnect3Remote = ac3 };
             ColituAdaptiveConnect3.SetRemote(ac3);
+        }
+        if (servers.AcEngine4 is { } ac4)
+        {
+            session = session with { AcEngine4Remote = ac4 };
+        }
+        if (servers.WhitelistProbe.Count > 0)
+        {
+            session = session with { WhitelistProbe = servers.WhitelistProbe };
         }
         if (servers.ClientNetwork.IsNotEmpty())
         {
@@ -446,6 +900,8 @@ public sealed class ColituVpnService
             _ = RefreshRecoverySetIfDueAsync();
             // The ad-blocking resolvers come with the bootstrap; kept for the next connect.
             _ = RefreshAdBlockAsync();
+            // Adaptive Connect 4: the decision model (6 h cache, only with the switch on).
+            _ = RefreshAcModelIfDueAsync();
             if (!IsAutoSelection && SelectedServer == null && _session.SelectedServerId.IsNotEmpty())
             {
                 SelectedServer = _lastServers.FirstOrDefault(s => string.Equals(s.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase));
@@ -548,10 +1004,18 @@ public sealed class ColituVpnService
                 // sudo-password errors are other exception types and are not counted.
                 ColituInsights.Instance.ConnectFinished(false, insightWatch.ElapsedMilliseconds);
                 ColituInsights.Instance.FunctionalCheck(false);
+                NoteConnectFailure();
+                throw;
+            }
+            catch (ColituConnectException)
+            {
+                // "No internet" too: under an operator whitelist the direct internet check fails as well.
+                NoteConnectFailure();
                 throw;
             }
             if (Status == ColituVpnStatus.Connected)
             {
+                _connectFailuresInRow = 0;
                 // A cancelled attempt ends Disconnected and counts as nothing.
                 ColituInsights.Instance.ConnectFinished(true, insightWatch.ElapsedMilliseconds);
                 // Connected means internet was verified through the tunnel: one check per connect,
@@ -619,6 +1083,7 @@ public sealed class ColituVpnService
         _pendingSpare = null;
         ResetSpareSwapDeferral();
         _failedThisConnect.Clear();
+        _lmLead = null;
         _apiUnreachable = false;
         OfferFastestServer = false;
         SetStatus(ColituVpnStatus.Connecting);
@@ -663,13 +1128,18 @@ public sealed class ColituVpnService
                 var wasEngaged = _killSwitch.IsEngaged;
                 killSwitchEngagedHere = await EngageKillSwitchAsync("TUN connecting") && !wasEngaged;
             }
-            var ranked = automatic ? RankedServers() : [];
-            var orderSource = "app";
-            if (automatic && ranked.Count > 1)
+            if (automatic)
+            {
+                // A new exploration draw per automatic connect (the list showed the previous one).
+                _lmSeed = ColituLm.RandomSeed();
+            }
+            var ranked = automatic ? RankedServers(forConnect: true) : [];
+            var orderSource = automatic && _lastOrderEngine == ColituLm.EngineAc4 ? "ac4" : "app";
+            if (automatic && ranked.Count > 1 && orderSource != "ac4")
             {
                 // The Go decision engine orders the candidates; the app's own order is the fallback.
                 (ranked, orderSource) = await ColituEngine.Instance.DecideOrderAsync("rank",
-                    ColituEngine.RankRequest(_lastServers, _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
+                    ColituEngine.RankRequest(AutoCandidates(), _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
                     ranked, item => item.Id);
             }
             if (automatic)
@@ -856,6 +1326,7 @@ public sealed class ColituVpnService
                     _adaptive.RememberGoodServer(_networkKey, connected.Id, now);
                 }
                 _adaptive.RememberGoodTransport(_networkKey, connected.Id, _activeTransport, now);
+                RecordLmOutcome(connected.Id, _activeTransport, ok: true);
             }
             _probeFailures = 0;
             _watch.Reset();
@@ -1921,6 +2392,7 @@ public sealed class ColituVpnService
         _lastServers = [];
         _multihopRoutes = [];
         _pings.Clear();
+        _reachability.Clear();
         Rotation = null;
         SelectedServer = null;
         ConnectedServer = null;
@@ -3115,7 +3587,7 @@ public sealed class ColituVpnService
         {
             LogConnection($"no memory of this network, starting with the hinted [{string.Join(", ", hinted.Select(item => item.Candidate.Protocol))}]");
             LogConnection($"Transport order: {string.Join(" > ", hinted.Select(item => item.Candidate.Protocol))} (hinted, no probe)");
-            return hinted;
+            return PreferLmLead(hinted, serverId);
         }
         var latency = await MeasureTransportLatencyAsync(ordered);
         _roundLatency = latency;
@@ -3144,7 +3616,24 @@ public sealed class ColituVpnService
                 .ToList();
         }
         LogConnection($"Transport order: {string.Join(" > ", ordered.Select(item => $"{item.Candidate.Protocol}({LatencyText(latency, item.Candidate.Protocol)})"))}");
-        return ordered;
+        return PreferLmLead(ordered, serverId);
+    }
+
+    /// <summary>Adaptive Connect 4 chose this server with a protocol: it goes first here, the rest stays behind it as fallback.</summary>
+    private List<(ColituConfigCandidate Candidate, ProfileItem Profile)> PreferLmLead(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> ordered, string? serverId)
+    {
+        if (_lmLead is not { } lead || !string.Equals(lead.ServerId, serverId, StringComparison.OrdinalIgnoreCase)
+            || _adaptive.IsStalled(_networkKey, serverId, lead.Protocol, DateTimeOffset.UtcNow))
+        {
+            return ordered;
+        }
+        var first = ordered.Where(item => string.Equals(item.Candidate.Protocol, lead.Protocol, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (first.Count == 0 || ordered.IndexOf(first[0]) <= 0)
+        {
+            return ordered;
+        }
+        LogConnection($"Adaptive Connect 4 chose {lead.Protocol} on this server: it goes first");
+        return first.Concat(ordered.Where(item => !first.Contains(item))).ToList();
     }
 
     private static string LatencyText(Dictionary<string, int> latency, string protocol)
@@ -3398,6 +3887,7 @@ public sealed class ColituVpnService
                         if (!_serverOutageThisRound)
                         {
                             _adaptive.MarkStalled(_networkKey, config.ServerId ?? server?.Id, candidate.Protocol, DateTimeOffset.UtcNow, provisional: true);
+                            RecordLmOutcome(config.ServerId ?? server?.Id, candidate.Protocol, ok: false, "no_traffic");
                         }
                         _failedThisConnect.Add(candidate.Protocol);
                     }
@@ -4327,6 +4817,10 @@ public sealed class ColituServersResponse
     public List<string> NetworkHintsServers { get; set; } = [];
     /// <summary>The panel's Adaptive Connect 3.0 switch for this device; null when the panel did not send one.</summary>
     public bool? AdaptiveConnect3 { get; set; }
+    /// <summary>The panel's Adaptive Connect 4 switch (<c>features.ac_engine_4</c>); null when the panel did not send one.</summary>
+    public bool? AcEngine4 { get; set; }
+    /// <summary>AC4 whitelist check: domestic hosts per country (upper-case ISO-2); empty when none.</summary>
+    public Dictionary<string, List<string>> WhitelistProbe { get; set; } = [];
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
 }
@@ -4349,6 +4843,14 @@ public sealed class ColituVpnServer
     public bool Locked { get; set; }
     /// <summary>A hidden CSL test node (alpha tester accounts): a manual choice only, automatic mode never picks it.</summary>
     public bool Alpha { get; set; }
+    /// <summary>The panel recommends this server (<c>recommended</c> in /servers): first inside its country, with a badge.</summary>
+    public bool Recommended { get; set; }
+    /// <summary>AC4: works under mobile operators' whitelists (<c>whitelist_ok</c>); only these are candidates in whitelist mode.</summary>
+    public bool WhitelistOk { get; set; }
+    /// <summary>Protocols the panel lists for the server (lower case); the AC4 candidates are server x protocol.</summary>
+    public List<string> Protocols { get; set; } = [];
+    /// <summary>The panel's load as sent: low, medium, high; null when unknown.</summary>
+    public string? LoadLevel { get; set; }
     public string? RequiredPlan { get; set; }
     public bool Hidden { get; set; }
     public bool RetainedHiddenSelection { get; set; }
@@ -4708,6 +5210,10 @@ public sealed record ColituVpnSession
     public string? NetworkHintsNetwork { get; init; }
     /// <summary>The panel's Adaptive Connect 3.0 switch for this device, kept while the panel cannot be reached.</summary>
     public bool? AdaptiveConnect3Remote { get; init; }
+    /// <summary>The panel's Adaptive Connect 4 switch (<c>features.ac_engine_4</c>), kept while the panel cannot be reached.</summary>
+    public bool? AcEngine4Remote { get; init; }
+    /// <summary>AC4 whitelist check: the panel's domestic hosts per country (<c>whitelist_probe</c>).</summary>
+    public Dictionary<string, List<string>>? WhitelistProbe { get; init; }
     /// <summary>Recovery set: the last fetch attempt (at most one per 6 h) and the account it was made for.</summary>
     public DateTimeOffset? RecoveryAttemptAt { get; init; }
     public string? RecoveryAttemptUser { get; init; }

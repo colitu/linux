@@ -284,6 +284,16 @@ public static partial class ColituServerNames
         return $"{localizedHead} ({localizedSuffix})";
     }
 
+    /// <summary>
+    /// The name ends in the bridge suffix ("Finlandiya (Köprü)", "… (Мост)", "… (Bridge)"): a node whose
+    /// entry address is in Russia and whose traffic leaves abroad (its country is the exit's).
+    /// </summary>
+    public static bool IsBridgeName(string? raw)
+    {
+        var match = Suffixed().Match(raw?.Trim() ?? "");
+        return match.Success && SuffixIndex.Value.ContainsKey(Normalize(match.Groups[2].Value.Trim()));
+    }
+
     /// <summary>A multihop route name, "Varşova → Frankfurt": each end as a city or a display name.</summary>
     public static string Route(string? raw, string? language = null)
     {

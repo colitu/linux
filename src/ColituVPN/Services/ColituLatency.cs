@@ -30,7 +30,9 @@ public static class ColituLatency
     /// <summary>Pings of every server with a probe address, by server id.</summary>
     public static async Task<Dictionary<string, int>> MeasureAllAsync(IEnumerable<ColituVpnServer> servers)
     {
-        var device = ColituNetwork.PhysicalInterfaceName();
+        // The probe interface, not only the one the core binds to: PPP / mobile broadband count too, or
+        // every ping of such a PC would be skipped while connected ("— ms" for alive servers).
+        var device = ColituNetwork.ProbeInterfaceName();
         using var gate = new SemaphoreSlim(Parallel);
         var probes = servers
             .Where(CanProbe)
@@ -179,31 +181,44 @@ public static class ColituLatency
             || (b[0] == 192 && b[1] == 168));
     }
 
-    internal static async Task<int?> ConnectMsAsync(IPAddress address, int port, string? device)
+    internal static async Task<int?> ConnectMsAsync(IPAddress address, int port, string? device) =>
+        (await ProbeAsync(address, port, device, requirePin: false, TimeoutMs)).Ms;
+
+    /// <summary>
+    /// One connect. <c>Unpinned</c>: <paramref name="requirePin"/> was set and the socket could not be
+    /// bound to <paramref name="device"/>, so nothing was dialled.
+    /// </summary>
+    internal static async Task<(int? Ms, bool Unpinned)> ProbeAsync(IPAddress address, int port, string? device, bool requirePin, int timeoutMs)
     {
         try
         {
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            var pinned = false;
             if (device.IsNotEmpty() && OperatingSystem.IsLinux())
             {
                 try
                 {
                     socket.SetRawSocketOption(SolSocket, SoBindToDevice, Encoding.ASCII.GetBytes(device + "\0"));
+                    pinned = true;
                 }
                 catch (SocketException)
                 {
                     // Kernels before 5.7 need CAP_NET_RAW: the measurement still works, possibly through the tunnel.
                 }
             }
-            using var timeout = new CancellationTokenSource(TimeoutMs);
+            if (requirePin && !pinned)
+            {
+                return (null, true);
+            }
+            using var timeout = new CancellationTokenSource(timeoutMs);
             var watch = Stopwatch.StartNew();
             await socket.ConnectAsync(new IPEndPoint(address, port), timeout.Token);
             watch.Stop();
-            return Math.Max(1, (int)watch.ElapsedMilliseconds);
+            return (Math.Max(1, (int)watch.ElapsedMilliseconds), false);
         }
         catch
         {
-            return null;
+            return (null, false);
         }
     }
 }

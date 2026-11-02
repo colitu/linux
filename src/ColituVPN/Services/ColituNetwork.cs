@@ -513,6 +513,41 @@ public static class ColituNetwork
         }
     }
 
+    /// <summary>
+    /// Interface the ping probes are bound to (SO_BINDTODEVICE): <see cref="PhysicalInterfaceName"/>, else
+    /// the lowest-metric IPv4 default-route interface that is up and neither Colitu's TUN nor another
+    /// VPN's interface. <see cref="PhysicalInterfaceName"/> skips PPP / WWAN links (no "device" link in
+    /// sysfs), so on those every ping was skipped while connected.
+    /// </summary>
+    public static string? ProbeInterfaceName()
+    {
+        if (PhysicalInterfaceName() is { } physical)
+        {
+            return physical;
+        }
+        try
+        {
+            var up = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(adapter => adapter.OperationalStatus is OperationalStatus.Up or OperationalStatus.Unknown)
+                .Select(adapter => adapter.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            return DefaultRoutes()
+                .Where(route => up.Contains(route.Interface) && !IsOwnTun(route.Interface) && !IsOtherVpnInterface(route.Interface))
+                .OrderBy(route => route.Metric)
+                .Select(route => route.Interface)
+                .FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituNetwork.ProbeInterfaceName", ex);
+            return null;
+        }
+    }
+
+    /// <summary>A tunnel / container / bridge interface; PPP and WWAN links are real uplinks and not counted.</summary>
+    internal static bool IsOtherVpnInterface(string name) =>
+        VirtualPrefixes.Where(prefix => prefix != "ppp").Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
+
     /// <summary>Bytes sent and received so far on the physical interface; -1 when unknown.</summary>
     public static long PhysicalBytes()
     {

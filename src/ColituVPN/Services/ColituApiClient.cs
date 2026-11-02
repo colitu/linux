@@ -49,8 +49,22 @@ public sealed class ColituApiClient
             NetworkHintsBlocked = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.Blocked),
             NetworkHintsPreferred = ColituNetworkHintsPolicy.ParsePreferred(response.NetworkHints?.Preferred, response.NetworkHints?.Blocked),
             NetworkHintsServers = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.BlockedServers),
-            AdaptiveConnect3 = ColituAdaptiveConnect3.ParseFeature(response.Features)
+            AdaptiveConnect3 = ColituAdaptiveConnect3.ParseFeature(response.Features),
+            AcEngine4 = ColituLmPlanner.ParseFeature(response.Features),
+            WhitelistProbe = ColituWhitelist.ParseProbe(response.WhitelistProbe)
         };
+    }
+
+    /// <summary>
+    /// The Adaptive Connect 4 model (<c>GET /client/ac-model</c>). The panel finds the country from the
+    /// request IP with the VPN off, else from <paramref name="networkToken"/> (the last VPN-off token).
+    /// </summary>
+    public async Task<ColituLmModel?> GetAcModelAsync(string? networkToken, CancellationToken token = default)
+    {
+        var path = networkToken is { Length: > 0 and <= 256 }
+            ? $"/client/ac-model?network_token={Uri.EscapeDataString(networkToken)}"
+            : "/client/ac-model";
+        return await ColituAuthService.Instance.GetAuthorizedJsonAsync<ColituLmModel>(path, token);
     }
 
     /// <summary>The multihop (double VPN) routes only: <c>GET /multihop/servers</c>.</summary>
@@ -491,6 +505,10 @@ public sealed class ColituApiClient
             Free = true,
             Locked = false,
             Alpha = dto.Alpha == true,
+            Recommended = dto.Recommended == true,
+            WhitelistOk = dto.WhitelistOk == true,
+            Protocols = (dto.Protocols ?? []).Select(value => (value ?? "").Trim().ToLowerInvariant()).Where(value => value.Length is > 0 and <= 32).Distinct().Take(16).ToList(),
+            LoadLevel = dto.Load?.Trim().ToLowerInvariant() is "low" or "medium" or "high" ? dto.Load.Trim().ToLowerInvariant() : null,
             Host = dto.LatencyHost,
             Port = dto.LatencyPort,
             Categories = (dto.Categories ?? []).Select(value => value.Trim().ToLowerInvariant()).Where(value => value.Length > 0).Distinct().ToList(),
@@ -1023,6 +1041,8 @@ internal sealed class ColituServerListDto
     [JsonPropertyName("network_hints")] public ColituNetworkHintsDto? NetworkHints { get; set; }
     /// <summary>Rollout switches for this device (<c>adaptive_connect_3</c>); absent from an older panel. Values that are not booleans are ignored.</summary>
     [JsonPropertyName("features")] public Dictionary<string, System.Text.Json.JsonElement>? Features { get; set; }
+    /// <summary>AC4 whitelist check: domestic hosts per country (kept raw: a bad value never fails the list).</summary>
+    [JsonPropertyName("whitelist_probe")] public System.Text.Json.JsonElement? WhitelistProbe { get; set; }
 }
 
 internal sealed class ColituNetworkHintsDto
@@ -1063,6 +1083,10 @@ internal sealed class ColituServerDto
     [JsonPropertyName("latency_port")] public int? LatencyPort { get; set; }
     /// <summary>Hidden CSL test node, sent to tester accounts only.</summary>
     [JsonPropertyName("alpha")] public bool? Alpha { get; set; }
+    /// <summary>The panel recommends this server (AC4): first inside its country, "Önerilen" badge. Absent = false.</summary>
+    [JsonPropertyName("recommended")] public bool? Recommended { get; set; }
+    /// <summary>AC4: the entry address works under mobile operators' whitelists (routes carry their entry node's flag). Absent = false.</summary>
+    [JsonPropertyName("whitelist_ok")] public bool? WhitelistOk { get; set; }
     // Multihop routes only.
     [JsonPropertyName("multihop")] public bool? Multihop { get; set; }
     [JsonPropertyName("route_slug")] public string? RouteSlug { get; set; }

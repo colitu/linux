@@ -25,6 +25,12 @@ public sealed class ColituAcEvent
     [JsonPropertyName("minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? Minutes { get; set; }
     [JsonPropertyName("best_node_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? BestNodeId { get; set; }
     [JsonPropertyName("best_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BestMs { get; set; }
+    /// <summary>whitelist: "on" (whitelist mode entered) or "off" (left).</summary>
+    [JsonPropertyName("state"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? State { get; set; }
+    [JsonPropertyName("foreign_ok"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? ForeignOk { get; set; }
+    [JsonPropertyName("foreign_total"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? ForeignTotal { get; set; }
+    [JsonPropertyName("domestic_ok"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? DomesticOk { get; set; }
+    [JsonPropertyName("domestic_total"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? DomesticTotal { get; set; }
 
     /// <summary>When the event was queued (not sent): decides which probe of an hour is the last one.</summary>
     [JsonIgnore] public DateTimeOffset Stamp { get; set; }
@@ -39,7 +45,7 @@ public static class ColituAcSpec
     public const int MaxMs = 600_000;
     public static readonly TimeSpan MinSendInterval = TimeSpan.FromHours(1);
 
-    public static readonly string[] Kinds = ["connect", "recovery", "switch", "drop", "probe", "choice"];
+    public static readonly string[] Kinds = ["connect", "recovery", "switch", "drop", "probe", "choice", "whitelist"];
     public static readonly string[] Protocols = ["vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic"];
     public static readonly string[] Reasons =
         ["timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network", "core_crash", "auth", "quota", "network_change", "other"];
@@ -153,6 +159,21 @@ public static class ColituAcSpec
                 // The best is the lowest of the candidates, the chosen one included.
                 result.BestMs = Math.Min(ClampMs(source.BestMs)!.Value, result.Ms!.Value);
                 result.Mode = "auto";
+                return result;
+            case "whitelist":
+                // No node: stored per country + ASN only. Totals 1..10, counts 0..total.
+                var state = source.State?.Trim().ToLowerInvariant();
+                if (state is not ("on" or "off") || source.ForeignTotal is not (>= 1 and <= 10) || source.DomesticTotal is not (>= 1 and <= 10)
+                    || source.ForeignOk is not { } foreignOk || source.DomesticOk is not { } domesticOk)
+                {
+                    return null;
+                }
+                result.State = state;
+                result.ForeignTotal = source.ForeignTotal;
+                result.DomesticTotal = source.DomesticTotal;
+                result.ForeignOk = Math.Clamp(foreignOk, 0, source.ForeignTotal.Value);
+                result.DomesticOk = Math.Clamp(domesticOk, 0, source.DomesticTotal.Value);
+                result.Ms = ClampMs(source.Ms);
                 return result;
             default:
                 return null;
