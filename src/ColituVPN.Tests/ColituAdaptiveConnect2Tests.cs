@@ -199,6 +199,17 @@ public class ColituAdaptiveConnect2Tests
     }
 
     [Fact]
+    public void ClientNetwork_ListThroughABridgeNeverNamesTheHomeNetwork()
+    {
+        ColituAdaptiveConnect.ListPlace(vpnOff: true, "RU", "RU-AS0001").Should().Be(("RU", "RU-AS0001"));
+
+        // A bridge exit the panel does not know as a node: the list comes back filled with the exit.
+        var place = ColituAdaptiveConnect.ListPlace(vpnOff: false, "FI", "FI-AS0002");
+        place.Should().Be(((string?)null, (string?)null));
+        ColituAdaptiveConnect.ResolveClientNetwork(place.Network, "RU-AS0001").Should().Be("RU-AS0001");
+    }
+
+    [Fact]
     public void ClientNetwork_ServerListFillsIt_EmptyListKeepsIt_UnknownNetworkIsAnotherKey()
     {
         ColituAdaptiveConnect.ResolveClientNetwork("RU-AS0002", null).Should().Be("RU-AS0002");

@@ -34,6 +34,14 @@ public static class ColituAdaptiveConnect
         string.IsNullOrWhiteSpace(fromServerList) ? known : fromServerList;
 
     /// <summary>
+    /// The country and network a server list says this device is on; only a list fetched with the
+    /// VPN off can tell. Through a bridge whose exit the panel does not know as a node they come back
+    /// filled, naming the exit, and were kept as the home network until the next list with the VPN off.
+    /// </summary>
+    public static (string? Country, string? Network) ListPlace(bool vpnOff, string? country, string? network) =>
+        vpnOff ? (country, network) : (null, null);
+
+    /// <summary>
     /// "&lt;link&gt;|&lt;client_network&gt;", e.g. "wifi|TR-AS9121". Memory from another key is not
     /// applied (it stays stored under its own key until it expires).
     /// </summary>

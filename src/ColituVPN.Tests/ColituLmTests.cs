@@ -386,6 +386,19 @@ public class ColituLmTests
     }
 
     [Fact]
+    public void ModelOfAnotherCountryLeavesTheAc3Rules()
+    {
+        var russia = new ColituLmModel { Version = 1, Country = "RU" };
+        ColituLmPlanner.ModelFor(russia, "RU").Should().BeSameAs(russia);
+        ColituLmPlanner.ModelFor(russia, " ru ").Should().BeSameAs(russia);
+        ColituLmPlanner.ModelFor(russia, "FI").Should().BeNull();
+        ColituLmPlanner.ModelFor(russia, null).Should().BeNull();
+        ColituLmPlanner.ModelFor(new ColituLmModel { Version = 1, Country = "" }, "RU").Should().BeNull("asked through the tunnel it has no priors");
+        ColituLmPlanner.ModelFor(null, "RU").Should().BeNull();
+        ColituLm.Decide(new ColituLmInput { Model = ColituLmPlanner.ModelFor(russia, "FI"), EngineEnabled = true, Candidates = [] }).Engine.Should().Be(ColituLm.EngineAc3);
+    }
+
+    [Fact]
     public void ModelStoreFetchesWhenMissingStaleOrForAnotherCountry()
     {
         var store = new ColituLmModelStore(null);

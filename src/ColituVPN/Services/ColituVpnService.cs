@@ -349,7 +349,7 @@ public sealed class ColituVpnService
             _whitelistMode, _session.ClientCountry);
         var input = new ColituLmInput
         {
-            Model = _lmModel.Model,
+            Model = ColituLmPlanner.ModelFor(_lmModel.Model, _session.ClientCountry),
             ModelAgeH = _lmModel.AgeH(now),
             EngineEnabled = true,
             Country = _session.ClientCountry ?? "",
@@ -367,7 +367,7 @@ public sealed class ColituVpnService
             {
                 _lmLead = null;
                 _lastOrderEngine = ColituLm.EngineAc3;
-                JournalDecision(input, decision, pairs, null, whitelist.Count > 0 ? "ac3_whitelist" : _lmModel.Model == null ? "ac3_no_model" : "ac3_model_version", tunnelLatency);
+                JournalDecision(input, decision, pairs, null, whitelist.Count > 0 ? "ac3_whitelist" : _lmModel.Model == null ? "ac3_no_model" : input.Model == null ? "ac3_model_country" : "ac3_model_version", tunnelLatency);
             }
             return whitelist.Count > 0 ? whitelist : null;
         }
@@ -480,17 +480,23 @@ public sealed class ColituVpnService
         ColituEngineJournal.Instance.Add(ColituEngineJournal.Outcome, new { node_id = serverId, protocol, outcome = ok ? "ok" : "fail", reason });
     }
 
+    /// <summary>No core runs, so a request leaves from this device's own network (the status alone cannot tell: Error and early Connecting have no tunnel either).</summary>
+    private static bool TunnelOff => !CoreManager.Instance.IsCoreRunning;
+
     /// <summary>Fetches the AC4 model when it is due (none, older than 6 h, another country); never throws.</summary>
     private async Task RefreshAcModelIfDueAsync()
     {
-        if (!AcEngine4Enabled || !_lmModel.TakeFetchSlot(DateTimeOffset.UtcNow, _session.ClientCountry))
+        // With the VPN off the panel takes the country from the request; through the tunnel from the
+        // token, and without one it would only see the exit: the last model stays.
+        var vpnOff = TunnelOff;
+        var networkToken = vpnOff ? null : CurrentNetworkToken();
+        if (!AcEngine4Enabled || (!vpnOff && networkToken == null) || !_lmModel.TakeFetchSlot(DateTimeOffset.UtcNow, _session.ClientCountry))
         {
             return;
         }
         try
         {
-            // With the VPN off the panel takes the country from the request; through the tunnel from the token.
-            var model = await _api.GetAcModelAsync(Status == ColituVpnStatus.Disconnected ? null : CurrentNetworkToken());
+            var model = await _api.GetAcModelAsync(networkToken);
             if (model != null)
             {
                 _lmModel.Set(model, DateTimeOffset.UtcNow);
@@ -761,6 +767,27 @@ public sealed class ColituVpnService
         _reachability.Visible(_lastServers, server => server.Id, [ConnectedServer?.Id]);
 
     /// <summary>
+    /// A connect that starts before the first server list (the PC was shut down while connected):
+    /// without a list the panel chooses, knowing nothing of what is blocked on this network, and keeps
+    /// that server for 24 h. The list is waited for at most 4 s; after that the panel chooses as before.
+    /// </summary>
+    private async Task EnsureServerListAsync(CancellationToken token)
+    {
+        try
+        {
+            await GetServersAsync().WaitAsync(TimeSpan.FromSeconds(4), token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Server list before connecting failed ({ex.GetType().Name})");
+        }
+    }
+
+    /// <summary>
     /// Automatic mode ranks the servers by ping, and a ping is only believed for ten minutes on the
     /// network it was taken on. After a network change or a long pause most of them are stale and the
     /// order silently fell back to the panel's: a far server could come first. Measure again (at most
@@ -806,11 +833,12 @@ public sealed class ColituVpnService
         return ColituAdaptiveConnect.NetworkKey(_linkKind, _session.ClientNetwork);
     }
 
-    /// <summary>Saves the panel's view of this device's network; values fetched through the VPN come back empty and never overwrite.</summary>
+    /// <summary>Saves the panel's view of this device's network; values fetched through the VPN never overwrite.</summary>
     private void RememberClientNetwork(ColituServersResponse servers)
     {
-        var country = servers.ClientCountry.NullIfEmpty() ?? _session.ClientCountry;
-        var network = ColituAdaptiveConnect.ResolveClientNetwork(servers.ClientNetwork, _session.ClientNetwork);
+        var place = ColituAdaptiveConnect.ListPlace(TunnelOff, servers.ClientCountry, servers.ClientNetwork);
+        var country = place.Country.NullIfEmpty() ?? _session.ClientCountry;
+        var network = ColituAdaptiveConnect.ResolveClientNetwork(place.Network, _session.ClientNetwork);
         var session = _session with { ClientCountry = country, ClientNetwork = network };
         if (servers.AdaptiveConnect3 is { } ac3)
         {
@@ -826,7 +854,7 @@ public sealed class ColituVpnService
         {
             session = session with { WhitelistProbe = servers.WhitelistProbe };
         }
-        if (servers.ClientNetwork.IsNotEmpty())
+        if (place.Network.IsNotEmpty())
         {
             // Fetched with the VPN off: the token and the hints belong to this network (no hints = none blocked).
             session = session with
@@ -834,11 +862,11 @@ public sealed class ColituVpnService
                 NetworkHintsBlocked = servers.NetworkHintsBlocked,
                 NetworkHintsPreferred = servers.NetworkHintsPreferred,
                 NetworkHintsServers = servers.NetworkHintsServers,
-                NetworkHintsNetwork = servers.ClientNetwork
+                NetworkHintsNetwork = place.Network
             };
             if (servers.NetworkToken.IsNotEmpty())
             {
-                session = session with { NetworkToken = servers.NetworkToken, NetworkTokenNetwork = servers.ClientNetwork, NetworkTokenAt = DateTimeOffset.UtcNow };
+                session = session with { NetworkToken = servers.NetworkToken, NetworkTokenNetwork = place.Network, NetworkTokenAt = DateTimeOffset.UtcNow };
             }
         }
         if (session == _session)

@@ -114,6 +114,13 @@ public static class ColituLmPlanner
     }
 
     /// <summary>
+    /// The model when it was built for the device's network country, otherwise null (AC 3 rules until
+    /// the right one comes): another country's priors would miss and every server would score alike.
+    /// </summary>
+    public static ColituLmModel? ModelFor(ColituLmModel? model, string? networkCountry) =>
+        model != null && string.Equals(Upper(model.Country), Upper(networkCountry), StringComparison.Ordinal) ? model : null;
+
+    /// <summary>
     /// The servers in the order a decision tries them: the chosen candidate's server first, then the
     /// ranking's servers (each once). <c>Lead</c> is the chosen protocol (null when the server lists none).
     /// </summary>
