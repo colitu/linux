@@ -51,7 +51,19 @@
             <SolidColorBrush x:Key="Surface2Brush" Color="#1C1C25" />
             <SolidColorBrush x:Key="TextBrush" Color="#F4F3FA" />
             <SolidColorBrush x:Key="MutedBrush" Color="#9A9AAB" />
-            <SolidColorBrush x:Key="DimBrush" Color="#63636F" />
+            <!--  Faint text (hints, notes, placeholders): 5.2:1 on the field colour #15151C (WCAG AA).  -->
+            <SolidColorBrush x:Key="DimBrush" Color="#8A8A9A" />
+            <!--  Text of a disabled primary button: 6.7:1 on its grey body.  -->
+            <SolidColorBrush x:Key="DisabledTextBrush" Color="#B4B4C2" />
+            <SolidColorBrush x:Key="DisabledBodyBrush" Color="#2A2A36" />
+            <!--  The theme's blue would otherwise show on any button without a Colitu theme.  -->
+            <SolidColorBrush x:Key="ButtonDefaultPrimaryForeground" Color="#C4B5FD" />
+            <SolidColorBrush x:Key="SemiColorPrimary" Color="#C4B5FD" />
+            <SolidColorBrush x:Key="SemiColorPrimaryPointerover" Color="#D4C9FE" />
+            <SolidColorBrush x:Key="SemiColorPrimaryActive" Color="#9F8CFF" />
+            <SolidColorBrush x:Key="ButtonSolidPrimaryBackground" Color="#7C6CF0" />
+            <SolidColorBrush x:Key="ButtonSolidPrimaryPointeroverBackground" Color="#9F8CFF" />
+            <SolidColorBrush x:Key="ButtonSolidPrimaryPressedBackground" Color="#6650CC" />
             <SolidColorBrush x:Key="LineBrush" Color="#14FFFFFF" />
             <SolidColorBrush x:Key="LineStrongBrush" Color="#26FFFFFF" />
             <SolidColorBrush x:Key="LilacBrush" Color="#C4B5FD" />
@@ -209,10 +221,12 @@
                 <Style Selector="^:pressed">
                     <Setter Property="RenderTransform" Value="scale(0.965)" />
                 </Style>
+                <!--  Disabled: a solid grey pill with readable text (not a faded one: 4.5:1 at least).  -->
                 <Style Selector="^:disabled">
-                    <Setter Property="Opacity" Value="0.42" />
+                    <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}" />
                 </Style>
                 <Style Selector="^:disabled /template/ Border#Body">
+                    <Setter Property="Background" Value="{StaticResource DisabledBodyBrush}" />
                     <Setter Property="BoxShadow" Value="none" />
                 </Style>
             </ControlTheme>
@@ -256,7 +270,7 @@
                     <Setter Property="Background" Value="#2A2A36" />
                 </Style>
                 <Style Selector="^:disabled">
-                    <Setter Property="Opacity" Value="0.42" />
+                    <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
                 </Style>
             </ControlTheme>
 
@@ -267,6 +281,13 @@
                 <Setter Property="Foreground" Value="#FFA3AE" />
                 <Setter Property="Background" Value="#22FF6B7A" />
                 <Setter Property="BorderBrush" Value="#55FF6B7A" />
+                <Style Selector="^:pointerover /template/ Border#Body">
+                    <Setter Property="Background" Value="#33FF6B7A" />
+                    <Setter Property="BorderBrush" Value="#88FF6B7A" />
+                </Style>
+                <Style Selector="^:pressed /template/ Border#Body">
+                    <Setter Property="Background" Value="#44FF6B7A" />
+                </Style>
             </ControlTheme>
 
             <ControlTheme x:Key="LinkButton" TargetType="Button">
@@ -293,7 +314,7 @@
                     <Setter Property="Foreground" Value="White" />
                 </Style>
                 <Style Selector="^:disabled">
-                    <Setter Property="Opacity" Value="0.42" />
+                    <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
                 </Style>
             </ControlTheme>
 
