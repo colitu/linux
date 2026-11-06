@@ -20,6 +20,8 @@ public sealed class ColituAcEvent
     [JsonPropertyName("detect_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? DetectMs { get; set; }
     [JsonPropertyName("first_try"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? FirstTry { get; set; }
     [JsonPropertyName("mode"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Mode { get; set; }
+    /// <summary>connect, automatic only: what ordered the servers of this connect ("ac4", "ac3" or "panel"). Absent for a manual connect.</summary>
+    [JsonPropertyName("engine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Engine { get; set; }
     [JsonPropertyName("spare"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Spare { get; set; }
     [JsonPropertyName("flap"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Flap { get; set; }
     [JsonPropertyName("minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? Minutes { get; set; }
@@ -49,6 +51,8 @@ public static class ColituAcSpec
     public static readonly string[] Protocols = ["vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic"];
     public static readonly string[] Reasons =
         ["timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network", "core_crash", "auth", "quota", "network_change", "other"];
+    /// <summary>Who ordered the servers of an automatic connect: the on-device AC 4 model, the app's own AC 3 rules, or the panel (no list yet).</summary>
+    public static readonly string[] Engines = ["ac4", "ac3", "panel"];
     public static readonly string[] NetworkTypes = ["wifi", "ethernet", "cellular", "other"];
 
     /// <summary>A node id as the panel writes it: a lower-case UUID. Null for anything else (a multihop route id is not a node).</summary>
@@ -67,6 +71,13 @@ public static class ColituAcSpec
         var value = link?.Trim().ToLowerInvariant() ?? "";
         return Array.IndexOf(NetworkTypes, value) >= 0 ? value : "";
     }
+
+    /// <summary>
+    /// The engine tag of one round of an automatic connect: "panel" when the panel chose the server (no ranked list, or every
+    /// ranked server already failed), else "ac4" when the on-device model ordered the list, else "ac3".
+    /// </summary>
+    public static string EngineOfRound(int rankedCount, bool panelChose, bool ac4Order) =>
+        rankedCount == 0 || panelChose ? "panel" : ac4Order ? "ac4" : "ac3";
 
     public static int? ClampMs(long? ms) => ms is { } value ? (int)Math.Clamp(value, 0, MaxMs) : null;
 
@@ -102,6 +113,7 @@ public static class ColituAcSpec
                 result.Ms = ClampMs(source.Ms);
                 result.FirstTry = source.FirstTry ?? false;
                 result.Mode = ModeName(source.Mode);
+                result.Engine = result.Mode == "auto" ? EngineName(source.Engine) : null;
                 return result;
             case "recovery":
                 if (node == null || outcome == null)
@@ -180,10 +192,28 @@ public static class ColituAcSpec
         }
     }
 
+    /// <summary>
+    /// A drop or recovery caused by the computer sleeping. The panel's allowed reasons (appinsight ac.go acReasons) do not
+    /// include it yet and it rejects the whole batch on an unknown one, so it is sent as <see cref="ResumeWireReason"/>
+    /// until the panel accepts "resume"; then only that constant changes.
+    /// </summary>
+    public const string ResumeReason = "resume";
+    public const string ResumeWireReason = "network_change";
+
     private static string ReasonName(string? reason)
     {
         var value = reason?.Trim().ToLowerInvariant();
+        if (value == ResumeReason)
+        {
+            return ResumeWireReason;
+        }
         return value != null && Array.IndexOf(Reasons, value) >= 0 ? value : "other";
+    }
+
+    private static string? EngineName(string? engine)
+    {
+        var value = engine?.Trim().ToLowerInvariant();
+        return value != null && Array.IndexOf(Engines, value) >= 0 ? value : null;
     }
 
     private static string ModeName(string? mode) =>
