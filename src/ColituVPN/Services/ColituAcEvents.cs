@@ -50,7 +50,7 @@ public static class ColituAcSpec
     public static readonly string[] Kinds = ["connect", "recovery", "switch", "drop", "probe", "choice", "whitelist"];
     public static readonly string[] Protocols = ["vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic"];
     public static readonly string[] Reasons =
-        ["timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network", "core_crash", "auth", "quota", "network_change", "other"];
+        ["timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network", "core_crash", "auth", "quota", "network_change", "resume", "other"];
     /// <summary>Who ordered the servers of an automatic connect: the on-device AC 4 model, the app's own AC 3 rules, or the panel (no list yet).</summary>
     public static readonly string[] Engines = ["ac4", "ac3", "panel"];
     public static readonly string[] NetworkTypes = ["wifi", "ethernet", "cellular", "other"];
@@ -193,20 +193,13 @@ public static class ColituAcSpec
     }
 
     /// <summary>
-    /// A drop or recovery caused by the computer sleeping. The panel's allowed reasons (appinsight ac.go acReasons) do not
-    /// include it yet and it rejects the whole batch on an unknown one, so it is sent as <see cref="ResumeWireReason"/>
-    /// until the panel accepts "resume"; then only that constant changes.
+    /// A drop or recovery caused by the computer sleeping: its own reason, out of the panel's drop total.
     /// </summary>
     public const string ResumeReason = "resume";
-    public const string ResumeWireReason = "network_change";
 
     private static string ReasonName(string? reason)
     {
         var value = reason?.Trim().ToLowerInvariant();
-        if (value == ResumeReason)
-        {
-            return ResumeWireReason;
-        }
         return value != null && Array.IndexOf(Reasons, value) >= 0 ? value : "other";
     }
 

@@ -56,14 +56,13 @@ public class ColituResumeSpareEngineTests
     }
 
     [Fact]
-    public void ResumeReason_IsSentAsNetworkChange_UntilThePanelAcceptsIt()
+    public void ResumeReason_IsSentAsItself()
     {
-        ColituAcSpec.Reasons.Should().NotContain(ColituAcSpec.ResumeReason);
+        ColituAcSpec.Reasons.Should().Contain(ColituAcSpec.ResumeReason);
         var drop = Wire(new ColituAcEvent { Kind = "drop", NodeId = Node, Reason = ColituAcSpec.ResumeReason, Minutes = 5 });
-        JsonDocument.Parse(drop).RootElement.GetProperty("reason").GetString().Should().Be(ColituAcSpec.ResumeWireReason);
-        ColituAcSpec.Reasons.Should().Contain(ColituAcSpec.ResumeWireReason);
+        JsonDocument.Parse(drop).RootElement.GetProperty("reason").GetString().Should().Be("resume");
         var recovery = Wire(new ColituAcEvent { Kind = "recovery", NodeId = Node, Outcome = "ok", Reason = "resume", Ms = 900 });
-        JsonDocument.Parse(recovery).RootElement.GetProperty("reason").GetString().Should().Be("network_change");
+        JsonDocument.Parse(recovery).RootElement.GetProperty("reason").GetString().Should().Be("resume");
     }
 
     // ── Spare win past the budget ──────────────────────────────────────────
