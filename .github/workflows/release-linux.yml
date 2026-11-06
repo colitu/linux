@@ -74,6 +74,10 @@ jobs:
           dotnet publish src/ColituVPN/ColituVPN.csproj -c Release -r "linux-$ARCH" \
             -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" -o publish
 
+      - name: SQLite for older systems
+        # The NuGet library needs glibc 2.38; see scripts/build-sqlite.sh.
+        run: docker run --rm -v "$PWD:/w" -w /w rockylinux/rockylinux:8 bash scripts/build-sqlite.sh publish/libe_sqlite3.so
+
       - name: Package
         env:
           ARCH: ${{ matrix.arch }}
