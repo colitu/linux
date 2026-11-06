@@ -243,7 +243,9 @@ License:        GPL-3.0-only
 URL:            https://colitu.com
 BuildArch:      ${RPM_ARCH}
 AutoReqProv:    no
-Requires:       glibc, libgcc, libstdc++, zlib, fontconfig, libicu, ca-certificates
+Requires:       glibc, libgcc, libstdc++, zlib, fontconfig, libicu, ca-certificates, libX11, libICE, libSM
+# .NET 10 cannot load OpenSSL 4 (Fedora 45 default): name the library, so Fedora 45 gets openssl3-libs.
+Requires:       (libssl.so.3()(64bit) or libssl.so.1.1()(64bit))
 Recommends:     sudo, nftables, polkit, libnotify, xdg-utils
 
 %global debug_package %{nil}
