@@ -91,6 +91,8 @@ public sealed class ColituVpnService
     private volatile string? _checkIndexId;
     /// <summary>Adaptive Connect 2.0 mid-session watcher (every transport; spare-aware).</summary>
     private readonly ColituTunnelWatch _watch = new();
+    // Transports that keep dropping right after they connect on this network (DPI freezes).
+    private readonly ColituFlapGuard _flaps = new();
     private readonly ColituSpareHealth _spareHealth = new();
     private long _lastSpareProbeAt;
     /// <summary>A replacement for a dead spare, waiting for a quiet moment to reload the core.</summary>
@@ -374,6 +376,21 @@ public sealed class ColituVpnService
             return whitelist.Count > 0 ? whitelist : null;
         }
         var (order, lead) = ColituLmPlanner.Order(decision, pairs);
+        // A server that just carried nothing on this network (penalized for 30 minutes) goes last:
+        // the model alone put the same dead server first on every reconnect and auto-connect.
+        var demoted = ColituTransportOrder.PenalizedLast(order, item => item.Id != null && _adaptive.IsPenalized(network, item.Id, now));
+        if (!ReferenceEquals(demoted, order))
+        {
+            if (forConnect)
+            {
+                LogConnection($"Adaptive Connect 4: penalized server(s) moved last ({string.Join(", ", order.Where(item => item.Id != null && _adaptive.IsPenalized(network, item.Id, now)).Select(item => item.Id))})");
+            }
+            if (lead != null && !string.Equals(demoted.FirstOrDefault()?.Id, order.FirstOrDefault()?.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                lead = null;
+            }
+            order = demoted;
+        }
         if (forConnect)
         {
             _lastOrderEngine = ColituLm.EngineAc4;
@@ -1290,17 +1307,25 @@ public sealed class ColituVpnService
                     }
                     // Automatic mode: about 20 s per server and 45 s for the whole connect.
                     TimeSpan? serverBudget = automatic ? ServerBudget(connectWatch.Elapsed) : null;
+                    // Per server: a refusal seen on the previous server says nothing about this one.
+                    _credentialsRefused = false;
+                    var serverWatch = Stopwatch.StartNew();
                     try
                     {
                         await StartFirstWorkingProfileAsync(profiles, config, connected, token, serverBudget);
                     }
-                    catch (Exception ex) when ((_credentialsRefused || config.CredentialsPending) && ex is not (OperationCanceledException or ColituSpareServerWins))
+                    catch (Exception ex) when ((_credentialsRefused || config.CredentialsPending) && !_serverOutageThisRound
+                        && ex is not (OperationCanceledException or ColituSpareServerWins))
                     {
                         // The panel creates this device's credentials for a server the first time it is
                         // chosen and pushes them to the node at once; credentials_pending says the node
                         // had not confirmed them when the settings were sent. The same server is tried
                         // again every 2 s until it takes them (a picked server longer than an automatic one).
-                        await RetryWhileCredentialsSettleAsync(profiles, config, connected, token, serverBudget, automatic);
+                        // Not in a server outage: no port answered, new credentials cannot help. The retries
+                        // get what is left of this server's budget, not a second full one.
+                        var left = serverBudget is { } budget ? budget - serverWatch.Elapsed : (TimeSpan?)null;
+                        await RetryWhileCredentialsSettleAsync(profiles, config, connected, token,
+                            left is { } rest && rest < TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : left, automatic);
                     }
                     break;
                 }
@@ -2579,6 +2604,7 @@ public sealed class ColituVpnService
     /// <summary>3 misses, no spare: Hysteria2 switches transport; a TCP transport is marked (10 minutes) and the tunnel reconnects.</summary>
     private async Task OnWatchPrimaryDeadAsync(string detail)
     {
+        NoteFlap("it stopped carrying traffic");
         if (_activeTransport == "hysteria2")
         {
             await OnHysteriaStalledAsync(detail);
@@ -2600,6 +2626,7 @@ public sealed class ColituVpnService
 
     private async Task OnWatchReconnectAsync(string detail)
     {
+        NoteFlap("both paths stopped carrying traffic");
         LogConnection(_watch.SpareDeadUnreplaced
             ? $"The primary misses behind a dead spare ({detail}); reconnecting"
             : $"Both paths carry no traffic ({detail}); reconnecting");
@@ -2802,6 +2829,7 @@ public sealed class ColituVpnService
         });
         var shortMark = _adaptive.MarkMidSessionStall(_networkKey, serverId, _activeTransport, now, provisional: true);
         LogConnection($"{serverId}/{_activeTransport} is dead, the warm spare {plan.ServerId}/{plan.Protocol} carries the traffic; it leads the next connect{(shortMark ? " (proven here: short penalty)" : "")}");
+        NoteFlap("the warm spare took over");
         if (plan.ServerId is { Length: > 0 } spareServer)
         {
             _adaptive.RememberGoodServer(_networkKey, spareServer, now);
@@ -3186,6 +3214,13 @@ public sealed class ColituVpnService
                 {
                     LogConnection($"Automatic reconnect attempt {attempt} failed: {ex.Message}");
                     await Task.Delay(TimeSpan.FromSeconds(attempt * 3));
+                    if (Status is ColituVpnStatus.Connected or ColituVpnStatus.Connecting || _connectionLock.CurrentCount == 0)
+                    {
+                        // The user connected (or is connecting) meanwhile: the next attempt would cancel
+                        // that connect or tear the new tunnel down.
+                        LogConnection("Automatic reconnect stopped: a connect started meanwhile");
+                        return;
+                    }
                 }
             }
 
@@ -3240,6 +3275,22 @@ public sealed class ColituVpnService
         server is { IsMultihop: false } ? ColituAcSpec.NodeId(server.Id) : null;
 
     /// <summary>The tunnel was lost without the user asking: one counter and one drop event per outage.</summary>
+    /// <summary>
+    /// The active transport died mid-session: a drop right after the connect, or a second one within
+    /// 15 minutes, demotes it on this server and network for 30 minutes (see <see cref="ColituFlapGuard"/>).
+    /// True when it is demoted now.
+    /// </summary>
+    private bool NoteFlap(string why)
+    {
+        var connectedFor = ConnectedAt is { } at ? DateTimeOffset.Now - at : TimeSpan.MaxValue;
+        if (!_flaps.Drop(_networkKey, ConnectedServer?.Id, _activeTransport, connectedFor, DateTimeOffset.UtcNow))
+        {
+            return false;
+        }
+        LogConnection($"{_activeTransport} on {ConnectedServer?.Id} dropped {(connectedFor == TimeSpan.MaxValue ? "" : $"{(int)connectedFor.TotalSeconds} s after connecting ")}({why}): it goes last on this network for 30 minutes");
+        return true;
+    }
+
     private void NoteDrop(string reason)
     {
         _lastDropReason = reason;
@@ -3686,8 +3737,18 @@ public sealed class ColituVpnService
     /// <summary>Adaptive Connect 4 chose this server with a protocol: it goes first here, the rest stays behind it as fallback.</summary>
     private List<(ColituConfigCandidate Candidate, ProfileItem Profile)> PreferLmLead(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> ordered, string? serverId)
     {
+        // Transports that keep freezing right after the connect on this network go last; the stall
+        // mark alone does not hold them back (a connect that passes the short check lifts it).
+        var now = DateTimeOffset.UtcNow;
+        var flapping = ordered.Where(item => _flaps.IsDemoted(_networkKey, serverId, item.Candidate.Protocol, now)).ToList();
+        if (flapping.Count > 0 && flapping.Count < ordered.Count)
+        {
+            ordered = ordered.Except(flapping).Concat(flapping).ToList();
+            LogConnection($"Dropped right after connecting here recently, tried last: {string.Join(", ", flapping.Select(item => item.Candidate.Protocol))}");
+        }
         if (_lmLead is not { } lead || !string.Equals(lead.ServerId, serverId, StringComparison.OrdinalIgnoreCase)
-            || _adaptive.IsStalled(_networkKey, serverId, lead.Protocol, DateTimeOffset.UtcNow))
+            || _adaptive.IsStalled(_networkKey, serverId, lead.Protocol, now)
+            || _flaps.IsDemoted(_networkKey, serverId, lead.Protocol, now))
         {
             return ordered;
         }
@@ -3841,6 +3902,15 @@ public sealed class ColituVpnService
     {
         if (_serverOutageThisRound)
         {
+            if (ColituTransportOrder.NothingCanConnect(profiles, item => item.Candidate.Protocol, _roundLatency))
+            {
+                // No UDP transport to fall back on and no TCP port answered: each one would cost 6-8 s.
+                var outageServer = config.ServerId ?? server?.Id;
+                _adaptive.Penalize(_networkKey, outageServer, DateTimeOffset.UtcNow);
+                SaveState();
+                LogConnection($"Server outage and no transport left to try; server {outageServer} penalized for 30 minutes");
+                throw new ColituConnectException(Loc.I["err.unreachable"]);
+            }
             var reachable = ColituTransportOrder.WithoutSilent(profiles, item => item.Candidate.Protocol, _roundLatency);
             if (reachable.Count < profiles.Count)
             {
@@ -3980,6 +4050,13 @@ public sealed class ColituVpnService
                     }
                     if (isLast)
                     {
+                        if (_serverOutageThisRound)
+                        {
+                            // No port answered and nothing carried traffic: the server is out on this
+                            // network. Without this a picked server (and AC4) started on it again at once.
+                            _adaptive.Penalize(_networkKey, config.ServerId ?? server?.Id, DateTimeOffset.UtcNow);
+                            SaveState();
+                        }
                         // No transport carried traffic: report it instead of claiming a connection.
                         throw new ColituConnectException(Loc.I["err.unreachable"]);
                     }

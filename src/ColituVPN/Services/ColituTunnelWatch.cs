@@ -284,4 +284,89 @@ public static class ColituTransportOrder
     /// <summary>The tier of a transport in a round whose marks are ignored (lower goes first).</summary>
     public static int IgnoredMarksTier(string protocol, Func<string, bool> proven, Func<string, bool> stalled, Func<string, bool> failedThisRound) =>
         failedThisRound(protocol) ? 3 : proven(protocol) ? 0 : stalled(protocol) ? 2 : 1;
+
+    /// <summary>
+    /// In a server outage round every offered transport is a TCP one whose port did not answer: none
+    /// can connect, so the server is given up at once instead of 6-8 s per transport.
+    /// </summary>
+    public static bool NothingCanConnect<T>(IReadOnlyCollection<T> items, Func<T, string> protocol, IReadOnlyDictionary<string, int> tcpLatency) =>
+        items.Count > 0 && items.All(item => tcpLatency.TryGetValue(protocol(item), out var ms) && ms < 0);
+
+    /// <summary>
+    /// Servers penalized on this network go last in an automatic order (stable otherwise). Unchanged
+    /// when every server is penalized: then the order itself is all there is.
+    /// </summary>
+    public static List<T> PenalizedLast<T>(List<T> order, Func<T, bool> penalized)
+    {
+        var bad = order.Where(penalized).ToList();
+        return bad.Count == 0 || bad.Count == order.Count ? order : order.Where(item => !penalized(item)).Concat(bad).ToList();
+    }
+}
+
+/// <summary>
+/// A transport that keeps dropping right after it connects (a DPI freeze: the handshake passes, the
+/// stream stops 10-60 s later) is demoted on this network for <see cref="DemotedFor"/>: it goes last
+/// and Adaptive Connect 4 no longer puts it first. A good connect does not lift it (the next connect
+/// always passes the short check, that is the pattern). Pure state, unit tested.
+/// </summary>
+public sealed class ColituFlapGuard
+{
+    /// <summary>A drop this soon after the connect counts as a flap by itself.</summary>
+    public static readonly TimeSpan ShortSession = TimeSpan.FromMinutes(2);
+    /// <summary>Two drops of the same transport within this window are a flap too.</summary>
+    public static readonly TimeSpan Window = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan DemotedFor = TimeSpan.FromMinutes(30);
+
+    private readonly Dictionary<string, List<DateTimeOffset>> _drops = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _demoted = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+
+    private static string Key(string? network, string? server, string? transport) => $"{network}|{server}|{transport}";
+
+    /// <summary>Records a mid-session drop; true when it demotes the transport (newly or again).</summary>
+    public bool Drop(string? network, string? server, string? transport, TimeSpan connectedFor, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(transport))
+        {
+            return false;
+        }
+        var key = Key(network, server, transport);
+        lock (_gate)
+        {
+            if (!_drops.TryGetValue(key, out var list))
+            {
+                _drops[key] = list = [];
+            }
+            list.RemoveAll(at => now - at > Window);
+            list.Add(now);
+            if (connectedFor >= ShortSession && list.Count < 2)
+            {
+                return false;
+            }
+            _demoted[key] = now + DemotedFor;
+            return true;
+        }
+    }
+
+    public bool IsDemoted(string? network, string? server, string? transport, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(transport))
+        {
+            return false;
+        }
+        lock (_gate)
+        {
+            var key = Key(network, server, transport);
+            if (!_demoted.TryGetValue(key, out var until))
+            {
+                return false;
+            }
+            if (now < until)
+            {
+                return true;
+            }
+            _demoted.Remove(key);
+            return false;
+        }
+    }
 }
