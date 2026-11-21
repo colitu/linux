@@ -280,6 +280,33 @@ public sealed partial class ColituVpnService
         SaveState();
     }
 
+    /// <summary>Starred servers, newest first (<see cref="ColituServerPicks"/>); kept with the other preferences.</summary>
+    public IReadOnlyList<string> FavoriteServerIds => Preferences.FavoriteServerIds ?? [];
+
+    /// <summary>The last three servers connected to, newest first.</summary>
+    public IReadOnlyList<string> RecentServerIds => Preferences.RecentServerIds ?? [];
+
+    /// <summary>Stars or unstars a server; true when it is a favourite now.</summary>
+    public bool ToggleFavoriteServer(string id)
+    {
+        var favorites = ColituServerPicks.ToggleFavorite(FavoriteServerIds, id, out var added);
+        _session = _session with { Preferences = _session.Preferences with { FavoriteServerIds = favorites } };
+        SaveState();
+        return added;
+    }
+
+    /// <summary>Remembers a server the tunnel came up on (saved only when the list changes).</summary>
+    public void RememberRecentServer(string? id)
+    {
+        var recent = ColituServerPicks.AddRecent(RecentServerIds, id);
+        if (recent.SequenceEqual(RecentServerIds, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        _session = _session with { Preferences = _session.Preferences with { RecentServerIds = recent } };
+        SaveState();
+    }
+
     public void SetAdvancedMode(bool advanced)
     {
         _session = _session with { Preferences = _session.Preferences with { AdvancedMode = advanced } };
@@ -1938,6 +1965,12 @@ public sealed partial class ColituVpnService
     private (int Port, NetworkCredential? Credentials) TunnelCheckTarget() => _checkInbound is { } check
         ? (check.Port, new NetworkCredential(check.User, check.Password))
         : (AppManager.Instance.GetLocalPort(EInboundProtocol.socks), LocalInboundCredentials());
+
+    /// <summary>The local SOCKS port that carries a request through the tunnel (connection panel, leak test).</summary>
+    public (int Port, NetworkCredential? Credentials) TunnelProxy() => TunnelCheckTarget();
+
+    /// <summary>TUN mode is in effect for the running core.</summary>
+    public bool TunActive => _config.TunModeItem.EnableTun;
 
     /// <summary>The local port's per-run account while it asks for one (TUN mode), else null.</summary>
     private NetworkCredential? LocalInboundCredentials() => AppManager.Instance.LocalInboundAuthFor(_config.TunModeItem.EnableTun)
@@ -5729,7 +5762,11 @@ public sealed record ColituVpnPreferences(
     long GeckoMinIssued = 0,
     Dictionary<string, long>? GeckoSkinRevs = null,
     // The connection method picked on the home screen: "" = automatic, "colitu-gecko" = ColituGecko (Gecko only, whatever the server).
-    string PreferredTransport = "")
+    string PreferredTransport = "",
+    // Starred servers (ids), newest first: Locations and the tray offer them (ColituServerPicks).
+    List<string>? FavoriteServerIds = null,
+    // The last three servers connected to (ids), newest first.
+    List<string>? RecentServerIds = null)
 {
     /// <summary>
     /// Preferences of a first run (no saved state yet): privacy mode on, Simple mode. The record
@@ -5758,7 +5795,9 @@ public sealed record ColituVpnPreferences(
             Language = language,
             ConnectionMode = connectionMode,
             LocationSort = ColituLocationSort.Normalize(LocationSort),
-            PreferredTransport = ColituTransportChoice.Normalize(PreferredTransport)
+            PreferredTransport = ColituTransportChoice.Normalize(PreferredTransport),
+            FavoriteServerIds = ColituServerPicks.Normalize(FavoriteServerIds, ColituServerPicks.MaxFavorites),
+            RecentServerIds = ColituServerPicks.Normalize(RecentServerIds, ColituServerPicks.MaxRecent)
         };
     }
 

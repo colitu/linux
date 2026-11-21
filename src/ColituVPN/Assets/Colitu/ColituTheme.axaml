@@ -50,9 +50,9 @@
             <SolidColorBrush x:Key="SurfaceBrush" Color="#15151C" />
             <SolidColorBrush x:Key="Surface2Brush" Color="#1C1C25" />
             <SolidColorBrush x:Key="TextBrush" Color="#F4F3FA" />
-            <SolidColorBrush x:Key="MutedBrush" Color="#9A9AAB" />
+            <SolidColorBrush x:Key="MutedBrush" Color="#A9ADC2" />
             <!--  Faint text (hints, notes, placeholders): 5.2:1 on the field colour #15151C (WCAG AA).  -->
-            <SolidColorBrush x:Key="DimBrush" Color="#8A8A9A" />
+            <SolidColorBrush x:Key="DimBrush" Color="#9EA2AF" />
             <!--  Text of a disabled primary button: 6.7:1 on its grey body.  -->
             <SolidColorBrush x:Key="DisabledTextBrush" Color="#B4B4C2" />
             <SolidColorBrush x:Key="DisabledBodyBrush" Color="#2A2A36" />
@@ -80,7 +80,7 @@
             <SolidColorBrush x:Key="Glass10Brush" Color="#1AFFFFFF" />
             <SolidColorBrush x:Key="IconWellBrush" Color="#1C1C25" />
             <SolidColorBrush x:Key="TileBrush" Color="#15151C" />
-            <SolidColorBrush x:Key="KickerBrush" Color="#9A9AAB" />
+            <SolidColorBrush x:Key="KickerBrush" Color="#A9ADC2" />
             <SolidColorBrush x:Key="ErrorBoxBrush" Color="#1AFF6B7A" />
             <SolidColorBrush x:Key="ErrorEdgeBrush" Color="#59FF6B7A" />
             <SolidColorBrush x:Key="ErrorTextBrush" Color="#FFA3AE" />
@@ -225,6 +225,11 @@
                 <Style Selector="^:disabled">
                     <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}" />
                 </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Style>
                 <Style Selector="^:disabled /template/ Border#Body">
                     <Setter Property="Background" Value="{StaticResource DisabledBodyBrush}" />
                     <Setter Property="BoxShadow" Value="none" />
@@ -269,6 +274,11 @@
                 <Style Selector="^:pressed /template/ Border#Body">
                     <Setter Property="Background" Value="#2A2A36" />
                 </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Style>
                 <Style Selector="^:disabled">
                     <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
                 </Style>
@@ -300,7 +310,11 @@
                 <Setter Property="Cursor" Value="Hand" />
                 <Setter Property="Template">
                     <ControlTemplate>
-                        <Border Padding="{TemplateBinding Padding}" Background="Transparent">
+                        <Border
+                            Name="Body"
+                            Padding="{TemplateBinding Padding}"
+                            Background="Transparent"
+                            CornerRadius="8">
                             <ContentPresenter
                                 Name="PART_ContentPresenter"
                                 VerticalAlignment="Center"
@@ -316,11 +330,16 @@
                 <Style Selector="^:disabled">
                     <Setter Property="Foreground" Value="{StaticResource DimBrush}" />
                 </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Style>
             </ControlTheme>
 
             <ControlTheme x:Key="IconButton" TargetType="Button">
-                <Setter Property="Width" Value="36" />
-                <Setter Property="Height" Value="36" />
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="40" />
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
                 <Setter Property="Background" Value="Transparent" />
@@ -349,6 +368,11 @@
                 <Style Selector="^:pressed /template/ Border#Body">
                     <Setter Property="Background" Value="#24FFFFFF" />
                 </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Style>
                 <Style Selector="^:disabled">
                     <Setter Property="Opacity" Value="0.35" />
                 </Style>
@@ -358,16 +382,16 @@
                 x:Key="WindowButton"
                 BasedOn="{StaticResource IconButton}"
                 TargetType="Button">
-                <Setter Property="Width" Value="34" />
-                <Setter Property="Height" Value="34" />
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="40" />
             </ControlTheme>
 
             <ControlTheme
                 x:Key="WindowCloseButton"
                 BasedOn="{StaticResource IconButton}"
                 TargetType="Button">
-                <Setter Property="Width" Value="34" />
-                <Setter Property="Height" Value="34" />
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="40" />
                 <Style Selector="^:pointerover /template/ Border#Body">
                     <Setter Property="Background" Value="#E0FF4D6D" />
                 </Style>
@@ -385,7 +409,11 @@
                 <Setter Property="Padding" Value="20,0" />
                 <Setter Property="Template">
                     <ControlTemplate>
-                        <Border Padding="{TemplateBinding Padding}" Background="Transparent">
+                        <Border
+                            Name="Body"
+                            Padding="{TemplateBinding Padding}"
+                            Background="Transparent"
+                            CornerRadius="999">
                             <ContentPresenter
                                 Name="PART_ContentPresenter"
                                 HorizontalAlignment="Center"
@@ -400,6 +428,11 @@
                 </Style>
                 <Style Selector="^:checked">
                     <Setter Property="Foreground" Value="{StaticResource OnAccentBrush}" />
+                </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
                 </Style>
             </ControlTheme>
 
@@ -437,6 +470,11 @@
                 </Style>
                 <Style Selector="^:checked /template/ Border#Body">
                     <Setter Property="Background" Value="{StaticResource SegmentActiveBrush}" />
+                </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
                 </Style>
                 <Style Selector="^:disabled">
                     <Setter Property="Opacity" Value="0.4" />
@@ -478,6 +516,11 @@
                 </Setter>
                 <Style Selector="^:checked /template/ Border#On">
                     <Setter Property="Opacity" Value="1" />
+                </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Track">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
                 </Style>
                 <Style Selector="^:checked /template/ Ellipse#Knob">
                     <Setter Property="RenderTransform" Value="translateX(18px)" />
@@ -532,6 +575,11 @@
                 <Style Selector="^:checked /template/ Path#Tick">
                     <Setter Property="IsVisible" Value="True" />
                 </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Box">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Style>
             </ControlTheme>
 
             <!-- ── Lists ──────────────────────────────────────────────────── -->
@@ -563,6 +611,11 @@
                 <Style Selector="^:selected /template/ Border#Body">
                     <Setter Property="Background" Value="#1E1B30" />
                     <Setter Property="BorderBrush" Value="#8C9F8CFF" />
+                </Style>
+                <!--  Keyboard focus (Tab): a lilac ring, never shown for mouse clicks.  -->
+                <Style Selector="^:focus-visible /template/ Border#Body">
+                    <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+                    <Setter Property="BorderThickness" Value="2" />
                 </Style>
                 <Style Selector="^:disabled">
                     <Setter Property="Opacity" Value="0.45" />
@@ -726,6 +779,15 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="999" />
         <Setter Property="Padding" Value="14,7" />
+    </Style>
+    <!--  Clickable cards and chips (Focusable, Enter / Space click): the same lilac ring on keyboard focus.  -->
+    <Style Selector="Border.clickable">
+        <Setter Property="Focusable" Value="True" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Border.clickable:focus-visible">
+        <Setter Property="BorderBrush" Value="{StaticResource LilacBrush}" />
+        <Setter Property="BorderThickness" Value="2" />
     </Style>
     <Style Selector="Border.divider">
         <Setter Property="Height" Value="1" />

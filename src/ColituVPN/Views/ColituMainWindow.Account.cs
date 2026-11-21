@@ -52,7 +52,7 @@ public partial class ColituMainWindow
             var account = await _auth.LoadAccountAsync();
             var limit = Math.Max(1, account.Subscription?.DeviceLimit ?? 1);
             DevicesTitle.Text = Loc.I.Format("account.devicesTitle", ("used", account.Devices.Count), ("limit", limit));
-            DeviceList.ItemsSource = account.Devices
+            var rows = account.Devices
                 .OrderByDescending(device => device.Current)
                 .Select(device => new ColituDeviceRow
                 {
@@ -60,6 +60,7 @@ public partial class ColituMainWindow
                     Name = device.Name ?? "",
                     IsCurrent = device.Current,
                     IsPaused = device.Paused,
+                    LastSeen = DateTimeOffset.TryParse(device.LastActiveAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var lastSeen) ? lastSeen : null,
                     Detail = string.Join(" · ", new[]
                     {
                         PlatformName(device.Platform),
@@ -69,6 +70,8 @@ public partial class ColituMainWindow
                     }.Where(part => !string.IsNullOrWhiteSpace(part)))
                 })
                 .ToList();
+            DeviceList.ItemsSource = rows;
+            ApplyCleanupButton(rows);
             ApplyAccount();
         }
         catch (Exception ex)
@@ -301,4 +304,9 @@ public sealed class ColituDeviceRow
     public string Detail { get; init; } = "";
     public bool IsCurrent { get; init; }
     public bool IsPaused { get; init; }
+    /// <summary>Last time the panel saw the device (null when it never connected).</summary>
+    public DateTimeOffset? LastSeen { get; init; }
+    /// <summary>Names of the icon buttons for screen readers: "Remove device: Office PC".</summary>
+    public string RemoveLabel => $"{Loc.I["account.remove"]}: {Name}";
+    public string RenameLabel => $"{Loc.I["account.rename"]}: {Name}";
 }

@@ -1,0 +1,60 @@
+namespace v2rayN.Desktop.Services;
+
+/// <summary>Strings of the 3.x interface refresh (connection panel, leak test, pings, usage history, devices, support), merged into <see cref="Strings"/>.</summary>
+public sealed partial class Loc
+{
+    // key → [ru, tr, en]
+    private static readonly Dictionary<string, string[]> RefreshStrings = new()
+    {
+        ["conn.title"] = ["Подключение", "Bağlantı bilgisi", "Connection"],
+        ["conn.country"] = ["Страна", "Ülke", "Country"],
+        ["conn.protocol"] = ["Протокол", "Protokol", "Protocol"],
+        ["conn.ping"] = ["Пинг", "Ping", "Ping"],
+        ["conn.graph"] = ["Скорость за последнюю минуту", "Son bir dakikanın hızı", "Speed over the last minute"],
+        ["conn.down"] = ["↓ {v}", "↓ {v}", "↓ {v}"],
+        ["conn.up"] = ["↑ {v}", "↑ {v}", "↑ {v}"],
+        ["conn.speedTunnel"] = ["Трафик через туннель.", "Tünelden geçen trafik.", "Traffic through the tunnel."],
+        ["conn.speedPc"] = ["Режим прокси: трафик всего компьютера.", "Proxy modu: bilgisayarın tüm trafiği.", "Proxy mode: the whole computer's traffic."],
+        ["conn.checking"] = ["Проверяем…", "Kontrol ediliyor…", "Checking…"],
+        ["conn.unknown"] = ["Не удалось узнать", "Öğrenilemedi", "Could not check"],
+        ["conn.leakHint"] = ["Проверка IP и DNS через туннель.", "Tünel içinden IP ve DNS kontrolü.", "Checks IP and DNS through the tunnel."],
+        ["conn.leakRun"] = ["Тест утечек", "Sızıntı testi", "Leak test"],
+        ["conn.leak.ipOk"] = ["IP: виден адрес сервера ({country}).", "IP: sunucunun adresi görünüyor ({country}).", "IP: sites see the server's address ({country})."],
+        ["conn.leak.ipWarn"] = ["IP: выход в {country}, а не в стране сервера. Переподключитесь.", "IP: çıkış {country}, sunucunun ülkesi değil. Yeniden bağlanın.", "IP: the exit is in {country}, not the server's country. Reconnect."],
+        ["conn.leak.dnsOk"] = ["DNS: запросы уходят через сервер ({ip}, {country}).", "DNS: sorgular sunucu üzerinden gidiyor ({ip}, {country}).", "DNS: lookups go through the server ({ip}, {country})."],
+        ["conn.leak.dnsWarn"] = ["DNS: резолвер в другой стране ({ip}, {country}), запросы могут идти мимо туннеля. Включите режим TUN.", "DNS: çözücü başka bir ülkede ({ip}, {country}); sorgular tünelin dışından gidiyor olabilir. TUN modunu açın.", "DNS: the resolver is in another country ({ip}, {country}); lookups may leave outside the tunnel. Turn on TUN mode."],
+        ["conn.leak.dnsUnknown"] = ["DNS: резолвер {ip}, страну узнать не удалось.", "DNS: çözücü {ip}, ülkesi öğrenilemedi.", "DNS: resolver {ip}, its country could not be checked."],
+        ["conn.leak.failed"] = ["Проверка не удалась. Попробуйте ещё раз.", "Test tamamlanamadı. Tekrar deneyin.", "The test did not finish. Try again."],
+        ["locations.pingAll"] = ["Пинг всех", "Hepsine ping", "Ping all"],
+        ["locations.pingAllHint"] = ["Измерить пинг всех локаций заново", "Tüm konumların ping'ini yeniden ölç", "Measure every location's ping again"],
+        ["locations.pingRow"] = ["Измерить пинг: {name}", "Ping ölç: {name}", "Measure ping: {name}"],
+        ["usage.title"] = ["Трафик за 30 дней", "Son 30 günün trafiği", "Traffic, last 30 days"],
+        ["usage.today"] = ["Сегодня", "Bugün", "Today"],
+        ["usage.peak"] = ["Максимум: {day} · {total}", "En yoğun gün: {day} · {total}", "Busiest day: {day} · {total}"],
+        ["usage.day"] = ["{day}: {total} (↓ {down} · ↑ {up})", "{day}: {total} (↓ {down} · ↑ {up})", "{day}: {total} (↓ {down} · ↑ {up})"],
+        ["account.cleanup"] = ["Удалить старые устройства", "Eski cihazları temizle", "Remove old devices"],
+        ["account.cleanupCount"] = ["Удалить старые устройства ({n})", "Eski cihazları temizle ({n})", "Remove old devices ({n})"],
+        ["account.cleanupHint"] = ["Устройства, которые не подключались больше 30 дней. Этот компьютер не затрагивается.", "30 günden uzun süredir görülmeyen cihazlar. Bu bilgisayar etkilenmez.", "Devices not seen for more than 30 days. This computer is never removed."],
+        ["account.cleanupConfirm"] = ["Удалить устройства, не подключавшиеся больше 30 дней ({n})?\n\n{names}\n\nНа них потребуется войти снова. Этот компьютер останется.", "30 günden uzun süredir görülmeyen {n} cihaz kaldırılsın mı?\n\n{names}\n\nBu cihazlarda yeniden giriş yapmak gerekecek. Bu bilgisayar kalır.", "Remove {n} devices not seen for more than 30 days?\n\n{names}\n\nThey will need to sign in again. This computer stays."],
+        ["account.cleanupNone"] = ["Нет устройств старше 30 дней.", "30 günden eski cihaz yok.", "No devices older than 30 days."],
+        ["account.cleanupDone"] = ["Удалено устройств: {n}", "{n} cihaz kaldırıldı", "{n} devices removed"],
+        ["account.rename"] = ["Переименовать", "Yeniden adlandır", "Rename"],
+        ["account.renameLabel"] = ["Название устройства", "Cihaz adı", "Device name"],
+        ["account.renameSave"] = ["Сохранить", "Kaydet", "Save"],
+        ["account.renamed"] = ["Название изменено", "Cihaz adı değişti", "Device renamed"],
+        ["support.typing"] = ["Поддержка печатает…", "Destek yazıyor…", "Support is typing…"],
+        ["support.dropHint"] = ["Перетащите сюда скриншот или файл · до 10 МБ", "Görsel veya dosyayı buraya sürükleyin · en fazla 10 MB", "Drop a screenshot or file here · up to 10 MB"],
+        ["support.read"] = ["Прочитано", "Okundu", "Read"],
+        ["support.sent"] = ["Отправлено", "Gönderildi", "Sent"],
+        ["support.replyFrom"] = ["Поддержка: {text}", "Destek: {text}", "Support: {text}"],
+        ["tray.favorites"] = ["Избранное", "Favoriler", "Favourites"],
+        ["tray.recent"] = ["Недавние", "Son kullanılanlar", "Recent"],
+        // Favourite and recently used servers (Locations sections, the tray submenu).
+        ["locations.favorites"] = ["ИЗБРАННОЕ", "FAVORİLER", "FAVOURITES"],
+        ["locations.recent"] = ["НЕДАВНИЕ", "SON KULLANILANLAR", "RECENTLY USED"],
+        ["locations.all"] = ["ВСЕ ЛОКАЦИИ", "TÜM KONUMLAR", "ALL LOCATIONS"],
+        ["locations.favoriteAdd"] = ["Добавить в избранное", "Favorilere ekle", "Add to favourites"],
+        ["locations.favoriteRemove"] = ["Убрать из избранного", "Favorilerden çıkar", "Remove from favourites"],
+        ["locations.favorite"] = ["в избранном", "favori", "favourite"],
+    };
+}

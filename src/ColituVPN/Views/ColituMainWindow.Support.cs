@@ -95,6 +95,7 @@ public partial class ColituMainWindow
         _supportImages.Clear();
         _diagAsker.Reset();
         NavSupportDot.IsVisible = false;
+        ShowSupportTyping(false);
         ShowSupportTab(false);
         SupportList.ItemsSource = null;
         SupportMessages.Children.Clear();
@@ -232,7 +233,7 @@ public partial class ColituMainWindow
         var hidden = !IsVisible || WindowState == WindowState.Minimized;
         if (hidden)
         {
-            Notify(Loc.I["support.newReply"]);
+            _ = NotifySupportReplyHiddenAsync();
         }
         else if (_page != "support")
         {
@@ -245,6 +246,10 @@ public partial class ColituMainWindow
     private void ApplySupportBadge()
     {
         NavSupportDot.IsVisible = _supportUnread > 0;
+        NavSupportCount.Text = _supportUnread > 9 ? "9+" : Math.Max(0, _supportUnread).ToString(Loc.I.Culture);
+        Avalonia.Automation.AutomationProperties.SetName(NavSupport, _supportUnread > 0
+            ? $"{Loc.I["nav.liveSupport"]}, {Loc.I["support.newReply"]} ({_supportUnread})"
+            : Loc.I["nav.liveSupport"]);
     }
 
     /// <summary>The "Live support" tab shows while signed in and support is on in the panel.</summary>
@@ -474,7 +479,9 @@ public partial class ColituMainWindow
                 ApplySupportThreadHeader(thread.Conversation);
             }
             var messages = thread.Messages ?? [];
-            var signature = $"{messages.Count}:{messages.LastOrDefault()?.Id}";
+            ShowSupportTyping(thread.PeerTyping);
+            // A read receipt arriving changes nothing else: count the read messages in the signature.
+            var signature = $"{messages.Count}:{messages.LastOrDefault()?.Id}:{messages.Count(message => message.ReadAt != null)}";
             if (signature == _supportSignature && !forceScroll)
             {
                 return;
@@ -540,7 +547,12 @@ public partial class ColituMainWindow
         }
     }
 
-    private Control BuildBubble(ColituSupportMessage message, DateTimeOffset local)
+    private Control BuildBubble(ColituSupportMessage message, DateTimeOffset local) =>
+        BuildBubbleCore(message, local, key => Resource<IBrush>(key), (attachment, mine) => attachment.IsImage ? BuildImageAttachment(attachment) : BuildFileAttachment(attachment, mine));
+
+    /// <summary>One chat bubble; brushes come from <paramref name="brush"/> so the preview test can draw it with sample data.</summary>
+    internal static Control BuildBubbleCore(ColituSupportMessage message, DateTimeOffset local, Func<string, IBrush> brush,
+        Func<ColituSupportAttachment, bool, Control>? attachmentView)
     {
         var mine = message.Sender == "user";
         var body = new StackPanel();
@@ -551,7 +563,7 @@ public partial class ColituMainWindow
             {
                 name += " · " + message.AdminName;
             }
-            body.Children.Add(new TextBlock { Text = name, FontSize = 12, FontWeight = FontWeight.SemiBold, Foreground = Resource<IBrush>("LilacBrush"), Margin = new Thickness(0, 0, 0, 5) });
+            body.Children.Add(new TextBlock { Text = name, FontSize = 12, FontWeight = FontWeight.SemiBold, Foreground = brush("LilacBrush"), Margin = new Thickness(0, 0, 0, 5) });
         }
         if (!string.IsNullOrWhiteSpace(message.Body))
         {
@@ -559,22 +571,29 @@ public partial class ColituMainWindow
             var text = new SelectableTextBlock
             {
                 Text = message.Body,
-                Foreground = Resource<IBrush>(mine ? "OnAccentBrush" : "TextBrush")
+                Foreground = brush(mine ? "OnAccentBrush" : "TextBrush")
             };
             text.Classes.Add("message");
             body.Children.Add(text);
         }
         foreach (var attachment in message.Attachments ?? [])
         {
-            body.Children.Add(attachment.IsImage ? BuildImageAttachment(attachment) : BuildFileAttachment(attachment, mine));
+            if (attachmentView != null)
+            {
+                body.Children.Add(attachmentView(attachment, mine));
+            }
         }
+        // Read receipt on the user's own messages: "✓ Sent" until the team reads it, then "✓✓ Read 14:09".
+        var receipt = mine ? (message.ReadAt is { } readAt
+                ? $"  ·  ✓✓ {Loc.I["support.read"]} {readAt.ToLocalTime().ToString("t", Loc.I.Culture)}"
+                : $"  ·  ✓ {Loc.I["support.sent"]}") : "";
         body.Children.Add(new TextBlock
         {
-            Text = local.ToString("t", Loc.I.Culture),
+            Text = local.ToString("t", Loc.I.Culture) + receipt,
             FontSize = 10.5,
             Margin = new Thickness(0, 6, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Right,
-            Foreground = mine ? new SolidColorBrush(Color.FromArgb(0x99, 0x0B, 0x0A, 0x14)) : Resource<IBrush>("DimBrush")
+            Foreground = mine ? new SolidColorBrush(Color.FromArgb(0xCC, 0x0B, 0x0A, 0x14)) : brush("DimBrush")
         });
 
         return new Border
@@ -585,8 +604,8 @@ public partial class ColituMainWindow
             Margin = new Thickness(mine ? 80 : 0, 0, mine ? 0 : 80, 10),
             HorizontalAlignment = mine ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             CornerRadius = mine ? new CornerRadius(18, 18, 6, 18) : new CornerRadius(18, 18, 18, 6),
-            Background = Resource<IBrush>(mine ? "ActionBrush" : "Surface2Brush"),
-            BorderBrush = mine ? null : Resource<IBrush>("LineBrush"),
+            Background = brush(mine ? "ActionBrush" : "Surface2Brush"),
+            BorderBrush = mine ? null : brush("LineBrush"),
             BorderThickness = new Thickness(mine ? 0 : 1)
         };
     }
@@ -738,7 +757,13 @@ public partial class ColituMainWindow
                 }
             ]
         });
-        foreach (var file in picked.Select(item => item.TryGetLocalPath()).Where(path => path != null).Cast<string>())
+        AddSupportFiles(files, chips, picked.Select(item => item.TryGetLocalPath()).Where(path => path != null).Cast<string>());
+    }
+
+    /// <summary>Adds picked or dropped files (checked: type, size, at most five), then redraws the chips.</summary>
+    private void AddSupportFiles(List<string> files, Panel chips, IEnumerable<string> candidates)
+    {
+        foreach (var file in candidates)
         {
             if (files.Count >= ColituSupportService.MaxFilesPerMessage)
             {
@@ -764,6 +789,18 @@ public partial class ColituMainWindow
         foreach (var file in files)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal };
+            if (SupportThumbnail(file) is { } thumbnail)
+            {
+                row.Children.Add(new Border
+                {
+                    Width = 44,
+                    Height = 44,
+                    Margin = new Thickness(-8, 0, 10, 0),
+                    CornerRadius = new CornerRadius(8),
+                    ClipToBounds = true,
+                    Child = new Image { Source = thumbnail, Stretch = Stretch.UniformToFill }
+                });
+            }
             row.Children.Add(new TextBlock
             {
                 Text = $"{System.IO.Path.GetFileName(file)}  ·  {FormatSize(new FileInfo(file).Length)}",
@@ -777,11 +814,13 @@ public partial class ColituMainWindow
             var remove = new Button
             {
                 Theme = Resource<ControlTheme>("IconButton"),
-                Width = 22,
-                Height = 22,
+                Width = 32,
+                Height = 32,
                 Margin = new Thickness(6, 0, 0, 0),
                 Content = icon
             };
+            ToolTip.SetTip(remove, Loc.I["account.remove"]);
+            Avalonia.Automation.AutomationProperties.SetName(remove, $"{Loc.I["account.remove"]}: {System.IO.Path.GetFileName(file)}");
             var captured = file;
             remove.Click += (_, _) =>
             {

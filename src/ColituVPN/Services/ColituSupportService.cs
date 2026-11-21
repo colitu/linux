@@ -391,6 +391,8 @@ public sealed class ColituSupportThread
 {
     [JsonPropertyName("conversation")] public ColituSupportConversation? Conversation { get; set; }
     [JsonPropertyName("messages")] public List<ColituSupportMessage>? Messages { get; set; }
+    /// <summary>Support is typing in this conversation (panel 2026-11; false on older panels).</summary>
+    [JsonPropertyName("peer_typing")] public bool PeerTyping { get; set; }
 }
 
 public sealed class ColituSupportMessage
@@ -401,6 +403,8 @@ public sealed class ColituSupportMessage
     [JsonPropertyName("body")] public string? Body { get; set; }
     [JsonPropertyName("created_at")] public DateTimeOffset CreatedAt { get; set; }
     [JsonPropertyName("attachments")] public List<ColituSupportAttachment>? Attachments { get; set; }
+    /// <summary>When the other side read the message (the team for the user's messages); null while unread.</summary>
+    [JsonPropertyName("read_at")] public DateTimeOffset? ReadAt { get; set; }
 }
 
 public sealed class ColituSupportAttachment

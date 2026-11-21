@@ -38,6 +38,7 @@ public partial class ColituMainWindow
             await ToggleConnectionAsync();
         };
         LocationCard.PointerReleased += (_, _) => Navigate("locations");
+        KeyboardClick(LocationCard, () => Navigate("locations"));
         ChangeServerButton.Click += (_, _) => Navigate("locations");
         PlanCtaButton.Click += (_, _) => Navigate("plan");
 
@@ -51,6 +52,7 @@ public partial class ColituMainWindow
         }
         SettingsStats.IsCheckedChanged += (_, _) => StatsChanged();
         ProtocolChip.PointerReleased += ProtocolChip_Click;
+        KeyboardClick(ProtocolChip, () => ProtocolChip_Click(ProtocolChip, new RoutedEventArgs()));
         HookUiMode();
     }
 
@@ -103,6 +105,7 @@ public partial class ColituMainWindow
     // ── Status ─────────────────────────────────────────────────────────────
     private void ApplyStatus()
     {
+        ApplyConnectionInfo();
         var status = _vpn.Status;
         var on = status == ColituVpnStatus.Connected;
         var busy = status is ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting;
@@ -132,6 +135,22 @@ public partial class ColituMainWindow
             : _upsell.BlocksConnect ? loc["upsell.cta"]
             : loc["home.tap"];
         ToolTip.SetTip(ConnectButton, on ? loc["home.disconnect"] : busy ? loc["home.cancel"] : loc["home.connect"]);
+        // Screen readers: what the button does now ("Connect" / "Disconnect"), not just "button".
+        Avalonia.Automation.AutomationProperties.SetName(ConnectButton, loc[on || busy ? "home.disconnect" : "home.connect"]);
+        if (on && !_vpn.IsAutoSelection && !_vpn.WhitelistSelected && _vpn.ConnectedServer?.Id is { Length: > 0 } connectedId
+            && !string.Equals(_vpn.RecentServerIds.FirstOrDefault(), connectedId, StringComparison.OrdinalIgnoreCase))
+        {
+            // Recently used: a server the user picked and the tunnel came up on (not the automatic choice).
+            try
+            {
+                _vpn.RememberRecentServer(connectedId);
+                UpdateTrayMenu();
+            }
+            catch (Exception ex)
+            {
+                Logging.SaveLog("ColituMainWindow.RememberRecentServer", ex);
+            }
+        }
         // Connected: the method in use. Otherwise the pick for the next connect (automatic when none).
         var offer = _vpn.GeckoOffer;
         var protocol = on && _vpn.ConnectedProtocol is { Length: > 0 } active ? active : ColituTransportChoice.Shown(_vpn.PreferredTransport, offer);
@@ -429,7 +448,8 @@ public partial class ColituMainWindow
         text.Text = Loc.I[key];
         var active = status is "active" or "trialing";
         // Lavender badge with dark text when active, rose glass otherwise (ColituBadge).
-        badge.Background = active ? Resource<IBrush>("BadgeBrush") : new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0x6B, 0x7A));
+        // Active: the lavender gradient slowly breathes between the brand violets (ActiveBadgeBrush).
+        badge.Background = active ? ActiveBadgeBrush(badge) : new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0x6B, 0x7A));
         text.Foreground = Resource<IBrush>(active ? "OnAccentBrush" : "DangerBrush");
     }
 
@@ -593,7 +613,7 @@ public partial class ColituMainWindow
     }
 
     // ── Protocol menu (automatic / ColituGecko) ────────────────────────────
-    private void ProtocolChip_Click(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    private void ProtocolChip_Click(object? sender, RoutedEventArgs e)
     {
         var offer = _vpn.GeckoOffer;
         if (_vpn.Status is ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting

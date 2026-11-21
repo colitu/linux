@@ -48,14 +48,31 @@ public partial class ColituMainWindow
     {
         ServerSearchBox.TextChanged += (_, _) => RenderServers();
         // The info button inside a row (Beyaz Liste): opens the explainer; its press never reaches the row.
+        // The buttons inside a row (Beyaz Liste info, the row's ping, the favourite star): their press never reaches the row.
         ServerList.AddHandler(Button.ClickEvent, (_, e) =>
         {
-            if (e.Source is Control { } source && source.FindAncestorOfType<Button>(true) is { } button && button.Classes.Contains("whitelistInfo"))
+            if (e.Source is not Control { } source || source.FindAncestorOfType<Button>(true) is not { } button)
+            {
+                return;
+            }
+            if (button.Classes.Contains("whitelistInfo"))
             {
                 e.Handled = true;
                 ShowWhitelistInfo();
             }
+            else if (button.Classes.Contains("rowPing") && button.DataContext is ColituServerRow pingRow)
+            {
+                e.Handled = true;
+                _ = RowPingAsync(pingRow, button);
+            }
+            else if (button.Classes.Contains("favorite") && button.DataContext is ColituServerRow { Server.Id: { Length: > 0 } id })
+            {
+                e.Handled = true;
+                ToggleFavorite(id);
+            }
         });
+        // A country header opens / closes on the press itself (see ServerList_PointerPressed).
+        ServerList.AddHandler(PointerPressedEvent, ServerList_PointerPressed, RoutingStrategies.Tunnel);
         WhitelistInfoOk.Click += (_, _) => WhitelistInfo.IsVisible = false;
         WhitelistInfo.PointerPressed += (_, e) =>
         {
@@ -183,7 +200,7 @@ public partial class ColituMainWindow
             // The search finds them too (country/city in every language, "whitelist" words).
             foreach (var node in ColituLocationSort.WhitelistRows(_servers, _vpn.NetworkCountry))
             {
-                var whitelistRow = ColituServerRow.Whitelist(node);
+                var whitelistRow = ColituServerRow.WhitelistWithPing(node, DisplayPingOf(node));
                 if (query.Length > 0 && !whitelistRow.Matches(query))
                 {
                     continue;
@@ -194,17 +211,34 @@ public partial class ColituMainWindow
             }
         }
 
-        if (query.Length == 0 && !filtered)
-        {
-            rows.Add(auto);
-        }
-
         ColituServerRow BuildRow(ColituVpnServer server, bool city = false)
         {
             var row = ColituServerRow.From(server, DisplayPingOf(server), city);
             // The virtual Beyaz Liste row carries the selected / connected state when it is the chosen one.
             row.MarkState(server.Id == connectedId && !_vpn.WhitelistSelected, server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection && !_vpn.WhitelistSelected);
             return row;
+        }
+
+        if (query.Length == 0 && !filtered)
+        {
+            rows.Add(auto);
+            // Right under "Best server": the starred servers, then the recently used ones (not repeated).
+            var favorites = ResolveServers(_vpn.FavoriteServerIds).Where(server => !IsHidden(server) || server.Id == connectedId).ToList();
+            var recent = ResolveServers(_vpn.RecentServerIds).Where(server => !favorites.Contains(server) && !IsHidden(server) && !RuHidden(server)).ToList();
+            if (favorites.Count > 0)
+            {
+                rows.Add(ColituServerRow.Header(Loc.I["locations.favorites"]));
+                rows.AddRange(favorites.Select(server => BuildRow(server)));
+            }
+            if (recent.Count > 0)
+            {
+                rows.Add(ColituServerRow.Header(Loc.I["locations.recent"]));
+                rows.AddRange(recent.Select(server => BuildRow(server)));
+            }
+            if (favorites.Count + recent.Count > 0)
+            {
+                rows.Add(ColituServerRow.Header(Loc.I["locations.all"]));
+            }
         }
 
         // The country of the picked (or connected) server starts open; after that the user decides.
@@ -271,6 +305,10 @@ public partial class ColituMainWindow
         }
 
         auto.MarkState(_vpn.IsAutoSelection && _vpn.Status == ColituVpnStatus.Connected, _vpn.IsAutoSelection);
+        foreach (var row in rows)
+        {
+            row.IsFavorite = ColituServerPicks.Contains(_vpn.FavoriteServerIds, row.Server?.Id);
+        }
 
         _renderingServers = true;
         try
@@ -342,6 +380,115 @@ public partial class ColituMainWindow
         finally
         {
             _measuringPings = false;
+        }
+    }
+
+    /// <summary>A server (or a multihop route) the panel still lists; null once it was removed.</summary>
+    private ColituVpnServer? FindServer(string id) =>
+        _servers.FirstOrDefault(server => string.Equals(server.Id, id, StringComparison.OrdinalIgnoreCase))
+        ?? _vpn.MultihopRoutes.FirstOrDefault(route => string.Equals(route.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    private List<ColituVpnServer> ResolveServers(IEnumerable<string> ids) => ColituServerPicks.Resolve(ids, FindServer);
+
+    /// <summary>The star on a row: adds the server to the favourites or takes it out.</summary>
+    private void ToggleFavorite(string id)
+    {
+        try
+        {
+            _vpn.ToggleFavoriteServer(id);
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituMainWindow.ToggleFavorite", ex);
+        }
+        RenderServersKeepingScroll();
+        UpdateTrayMenu();
+    }
+
+    /// <summary>Rebuilds the list and puts the scroll position back once the new rows are laid out.</summary>
+    private void RenderServersKeepingScroll()
+    {
+        var scroll = ServerList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        var offset = scroll?.Offset ?? default;
+        RenderServers();
+        if (scroll != null)
+        {
+            Dispatcher.UIThread.Post(() => scroll.Offset = offset, DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>
+    /// A country header opens / closes on the press itself and the event stops there, so the list
+    /// never selects the header: the toggle does not depend on what the selection does when the
+    /// rows are rebuilt under the pointer (one click, one toggle). Keyboard selection still toggles
+    /// through <see cref="ServerSelectedAsync"/>.
+    /// </summary>
+    private void ServerList_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(ServerList).Properties.IsLeftButtonPressed || e.Source is not Control source)
+        {
+            return;
+        }
+        if (source.FindAncestorOfType<Button>(true) != null)
+        {
+            return;
+        }
+        if (source.FindAncestorOfType<ListBoxItem>(true) is { DataContext: ColituServerRow { IsGroup: true } group })
+        {
+            e.Handled = true;
+            ToggleGroup(group.GroupKey);
+        }
+    }
+
+    /// <summary>The refresh button on a row: that server (a country: its cities) is measured again now.</summary>
+    private async Task RowPingAsync(ColituServerRow row, Button button)
+    {
+        var targets = row.GroupServers.Count > 0 ? row.GroupServers.ToList() : row.Server is { } server ? [server] : [];
+        if (targets.Count == 0 || _measuringPings)
+        {
+            return;
+        }
+        button.IsEnabled = false;
+        _measuringPings = true;
+        try
+        {
+            await _vpn.MeasurePingsAsync(targets);
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituMainWindow.RowPing", ex);
+        }
+        finally
+        {
+            _measuringPings = false;
+            button.IsEnabled = true;
+        }
+        if (_page == "locations")
+        {
+            RenderServersKeepingScroll();
+        }
+        ApplyLocationCard();
+    }
+
+    /// <summary>"Ping all": every location is measured again now.</summary>
+    private async Task PingAllAsync()
+    {
+        if (_measuringPings)
+        {
+            return;
+        }
+        PingAllButton.IsEnabled = false;
+        PingAllIcon.IsVisible = false;
+        PingAllSpinner.IsVisible = true;
+        try
+        {
+            await MeasurePingsAsync(force: true);
+        }
+        finally
+        {
+            PingAllButton.IsEnabled = true;
+            PingAllIcon.IsVisible = true;
+            PingAllSpinner.IsVisible = false;
         }
     }
 
@@ -501,13 +648,17 @@ public sealed class ColituServerRow
     public bool HasInfo => IsWhitelistRow;
     /// <summary>The virtual "Beyaz Liste" row of a whitelist node (Russia only): no ping, info button, connects with vless-ws.</summary>
     public bool IsWhitelistRow { get; set; }
-    public bool ShowPingBars => !IsWhitelistRow;
+    /// <summary>Since the 3.x refresh the Beyaz Liste row shows the node's ping and bars too.</summary>
+    public bool ShowPingBars => true;
     /// <summary>Key of this row in the selection ("whitelist:&lt;id&gt;" for the virtual row, the node id otherwise).</summary>
     public string? SelectionKey => Server?.Id is { } id ? (IsWhitelistRow ? ColituLocationSort.WhitelistKey(id) : id) : null;
 
-    public static ColituServerRow Whitelist(ColituVpnServer server)
+    public static ColituServerRow Whitelist(ColituVpnServer server) => WhitelistWithPing(server, null);
+
+    /// <summary>The Beyaz Liste row with the node's own ping.</summary>
+    public static ColituServerRow WhitelistWithPing(ColituVpnServer server, int? ping)
     {
-        var row = From(server);
+        var row = From(server, ping);
         row.IsWhitelistRow = true;
         row.Title = Loc.I["transport.vless-ws"];
         // Several whitelist servers (CZ / FI / SE / TR) are told apart by their country and city.
@@ -535,7 +686,21 @@ public sealed class ColituServerRow
     /// <summary>Ping from this computer in ms, measured outside the tunnel; null until measured.</summary>
     public int? Ping { get; init; }
     public bool PingVisible => !IsAuto && !IsHeader;
-    public string PingText => IsWhitelistRow ? "" : Ping is > 0 ? $"{Ping} ms" : "— ms";
+    public string PingText => Ping is > 0 ? $"{Ping} ms" : "— ms";
+    /// <summary>The row's own ping button: a server (also the Beyaz Liste row) or a country (all of its cities).</summary>
+    public bool PingButtonVisible => !IsAuto && !IsHeader && (Server != null || GroupServers.Count > 0);
+    public string PingActionText => Loc.I.Format("locations.pingRow", ("name", Title));
+    /// <summary>The cities of a country header (empty for any other row).</summary>
+    public IReadOnlyList<ColituVpnServer> GroupServers { get; init; } = [];
+
+    private static readonly IBrush StarOn = new SolidColorBrush(Color.FromRgb(0xC4, 0xB5, 0xFD));
+    private static readonly IBrush StarOff = new SolidColorBrush(Color.FromRgb(0xA9, 0xAD, 0xC2));
+    /// <summary>Starred by the user (Favourites section, tray submenu).</summary>
+    public bool IsFavorite { get; set; }
+    public bool CanFavorite => !IsAuto && !IsHeader && !IsGroup && !IsWhitelistRow && Server?.Id is { Length: > 0 };
+    public IBrush StarFill => IsFavorite ? StarOn : Brushes.Transparent;
+    public IBrush StarStroke => IsFavorite ? StarOn : StarOff;
+    public string FavoriteActionText => Loc.I[IsFavorite ? "locations.favoriteRemove" : "locations.favoriteAdd"];
     public IBrush PingBrush => Ping switch
     {
         null => Unlit,
@@ -623,6 +788,7 @@ public sealed class ColituServerRow
     {
         IsGroup = true,
         GroupKey = group.Key,
+        GroupServers = group.Servers,
         Expanded = expanded,
         Title = group.Name,
         Subtitle = Loc.I.Count("location", group.Servers.Count),

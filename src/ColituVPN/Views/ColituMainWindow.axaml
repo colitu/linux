@@ -20,6 +20,9 @@
     WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
+        <StreamGeometry x:Key="IconRefresh">M20 12a8 8 0 1 1-2.34-5.66 M20 4v4.5h-4.5</StreamGeometry>
+        <StreamGeometry x:Key="IconEdit">M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4</StreamGeometry>
+        <StreamGeometry x:Key="IconStar">M12 3.2l2.7 5.5 6 .9-4.35 4.25 1.03 6L12 17l-5.38 2.85 1.03-6L3.3 9.6l6-.9z</StreamGeometry>
         <!-- Round flag: the country's square flag clipped to a circle. -->
         <DataTemplate x:Key="FlagTemplate" x:DataType="v:ColituServerRow">
             <Panel>
@@ -94,7 +97,7 @@
                     Text="{Binding HeaderHint}"
                     TextWrapping="Wrap" />
             </StackPanel>
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="{Binding IsRow}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" IsVisible="{Binding IsRow}">
                 <ContentControl Content="{Binding}" ContentTemplate="{StaticResource FlagTemplate}" />
                 <StackPanel
                     Grid.Column="1"
@@ -180,6 +183,7 @@
                         Height="44"
                         Margin="0,-8,6,-8"
                         VerticalAlignment="Center"
+                        AutomationProperties.Name="{Binding InfoText}"
                         Classes="whitelistInfo"
                         IsVisible="{Binding HasInfo}"
                         Theme="{StaticResource IconButton}"
@@ -198,6 +202,23 @@
                                 Margin="0,-8,0,0"
                                 Fill="{StaticResource MutedBrush}" />
                         </Panel>
+                    </Button>
+                    <!-- Measure this row again (a country: all of its cities); the press does not reach the row. -->
+                    <Button
+                        Width="40"
+                        Height="40"
+                        Margin="0,-8,2,-8"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="{Binding PingActionText}"
+                        Classes="rowPing"
+                        IsVisible="{Binding PingButtonVisible}"
+                        Theme="{StaticResource IconButton}"
+                        ToolTip.Tip="{Binding PingActionText}">
+                        <Path
+                            Width="14"
+                            Height="14"
+                            Classes="stroke"
+                            Data="{StaticResource IconRefresh}" />
                     </Button>
                     <StackPanel Margin="0,0,10,0" VerticalAlignment="Center">
                         <TextBlock
@@ -251,9 +272,31 @@
                         Foreground="{Binding StateForeground}"
                         Text="{Binding StateText}" />
                 </Border>
+                <!-- Favourite star: adds the server to the Favourites section and the tray submenu. -->
+                <Button
+                    Grid.Column="4"
+                    Width="40"
+                    Height="40"
+                    Margin="6,-4,-8,-4"
+                    VerticalAlignment="Center"
+                    AutomationProperties.Name="{Binding FavoriteActionText}"
+                    Classes="favorite"
+                    IsVisible="{Binding CanFavorite}"
+                    Theme="{StaticResource IconButton}"
+                    ToolTip.Tip="{Binding FavoriteActionText}">
+                    <Path
+                        Width="16"
+                        Height="16"
+                        Data="{StaticResource IconStar}"
+                        Fill="{Binding StarFill}"
+                        Stretch="Uniform"
+                        Stroke="{Binding StarStroke}"
+                        StrokeJoin="Round"
+                        StrokeThickness="1.6" />
+                </Button>
                 <!-- Country header: points right when closed, down when open. -->
                 <Path
-                    Grid.Column="4"
+                    Grid.Column="5"
                     Width="12"
                     Height="12"
                     Margin="14,0,2,0"
@@ -337,6 +380,7 @@
         Background="{StaticResource BgBrush}"
         BorderBrush="{StaticResource WindowEdgeBrush}"
         BorderThickness="1"
+        ClipToBounds="True"
         CornerRadius="18">
         <Panel x:Name="Root" ClipToBounds="True">
             <!-- Backdrop (ColituBackdrop on the phones): near-black, a soft lavender
@@ -532,6 +576,7 @@
                                                 x:Name="ShowPasswordButton"
                                                 Grid.Column="1"
                                                 Margin="0,0,8,0"
+                                                AutomationProperties.Name="{s:T auth.show}"
                                                 Theme="{StaticResource IconButton}"
                                                 ToolTip.Tip="{s:T auth.show}">
                                                 <Path Classes="stroke" Data="{StaticResource IconEye}" />
@@ -978,24 +1023,66 @@
                 IsVisible="False"
                 RowDefinitions="64,*">
 
+                <!-- Home only: the purple globe from the brand kit, under the header and the page, quiet
+                     (low opacity, vignette, darker at the top) so the text stays readable. -->
+                <Panel
+                    x:Name="HomeBackdrop"
+                    Grid.RowSpan="2"
+                    ClipToBounds="True"
+                    IsHitTestVisible="False">
+                    <Image
+                        Opacity="0.42"
+                        RenderOptions.BitmapInterpolationMode="HighQuality"
+                        Source="/Assets/Colitu/home-bg.jpg"
+                        Stretch="UniformToFill"
+                        VerticalAlignment="Bottom" />
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <RadialGradientBrush
+                                Center="50%,55%"
+                                GradientOrigin="50%,55%"
+                                RadiusX="75%"
+                                RadiusY="80%">
+                                <GradientStop Offset="0.35" Color="#000A0A0E" />
+                                <GradientStop Offset="1" Color="#F00A0A0E" />
+                            </RadialGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                <GradientStop Offset="0" Color="#CC0A0A0E" />
+                                <GradientStop Offset="0.3" Color="#000A0A0E" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                </Panel>
+
+                <!-- Same side margins left and right and equal side columns: the tab pill sits in the
+                     middle of the window. The right column keeps room for the window buttons (HeaderRight margin). -->
                 <Grid
                     x:Name="HeaderBar"
-                    Margin="24,0,120,0"
-                    ColumnDefinitions="220,*,220">
+                    Margin="24,0,24,0"
+                    ColumnDefinitions="240,*,240">
                     <StackPanel
                         x:Name="BrandMark"
                         VerticalAlignment="Center"
                         IsHitTestVisible="False"
                         Orientation="Horizontal">
-                        <Image Height="28" Source="/Assets/Colitu/mark.png" />
-                        <Path
+                        <!-- Narrow window: the C mark alone (FitNav); otherwise the white COLITUVPN wordmark from the brand kit. -->
+                        <Image
+                            x:Name="BrandLogoMark"
+                            Height="28"
+                            AutomationProperties.Name="Colitu VPN"
+                            IsVisible="False"
+                            Source="/Assets/Colitu/mark.png" />
+                        <Image
                             x:Name="BrandWordmark"
-                            Height="14"
-                            Margin="14,0,0,0"
+                            Height="52"
                             VerticalAlignment="Center"
-                            Data="{StaticResource ColituWordmarkGeometry}"
-                            Fill="White"
-                            Stretch="Uniform" />
+                            AutomationProperties.Name="Colitu VPN"
+                            RenderOptions.BitmapInterpolationMode="HighQuality"
+                            Source="/Assets/Colitu/logo-wordmark.png" />
                     </StackPanel>
 
                     <!-- Floating pill with the tabs; the active one is lavender (ColituNavBar). -->
@@ -1073,14 +1160,25 @@
                                     Theme="{StaticResource NavTab}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="{s:T nav.liveSupport}" />
-                                        <Ellipse
+                                        <!-- Unread replies from the team: a count badge (9+ above nine). -->
+                                        <Border
                                             x:Name="NavSupportDot"
-                                            Width="7"
-                                            Height="7"
-                                            Margin="6,1,0,0"
+                                            MinWidth="18"
+                                            Height="18"
+                                            Margin="7,0,0,0"
+                                            Padding="5,0"
                                             VerticalAlignment="Center"
-                                            Fill="{StaticResource DangerBrush}"
-                                            IsVisible="False" />
+                                            Background="{StaticResource DangerBrush}"
+                                            CornerRadius="9"
+                                            IsVisible="False">
+                                            <TextBlock
+                                                x:Name="NavSupportCount"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                FontSize="11"
+                                                FontWeight="Bold"
+                                                Foreground="White" />
+                                        </Border>
                                     </StackPanel>
                                 </RadioButton>
                             </StackPanel>
@@ -1090,6 +1188,7 @@
                     <StackPanel
                         x:Name="HeaderRight"
                         Grid.Column="2"
+                        Margin="0,0,86,0"
                         HorizontalAlignment="Right"
                         VerticalAlignment="Center"
                         Orientation="Horizontal">
@@ -1309,7 +1408,8 @@
                                     x:Name="ProtocolChip"
                                     Margin="0,14,0,0"
                                     HorizontalAlignment="Center"
-                                    Classes="chip"
+                                    AutomationProperties.Name="{s:T home.protocol.hint}"
+                                    Classes="chip clickable"
                                     IsVisible="False">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock x:Name="ProtocolChipText" Classes="chipText" />
@@ -1335,7 +1435,8 @@
                                     x:Name="SplitChip"
                                     Margin="0,10,0,0"
                                     HorizontalAlignment="Center"
-                                    Classes="chip"
+                                    AutomationProperties.Name="{Binding #SplitChipText.Text}"
+                                    Classes="chip clickable"
                                     Cursor="Hand"
                                     IsVisible="False">
                                     <TextBlock x:Name="SplitChipText" Classes="chipText" />
@@ -1493,6 +1594,7 @@
                                         </StackPanel>
                                         <Button
                                             x:Name="PlanNoticeClose"
+                                            AutomationProperties.Name="{s:T planEnd.hide}"
                                             Grid.Column="1"
                                             Margin="10,0,0,0"
                                             VerticalAlignment="Top"
@@ -1510,7 +1612,8 @@
                                 <Border
                                     x:Name="LocationCard"
                                     Padding="20"
-                                    Classes="panel"
+                                    AutomationProperties.Name="{s:T home.changeServer}"
+                                    Classes="panel clickable"
                                     Cursor="Hand">
                                     <StackPanel>
                                         <Grid ColumnDefinitions="Auto,*,Auto">
@@ -1562,6 +1665,97 @@
                                             Theme="{StaticResource PrimaryButton}">
                                             <TextBlock FontSize="15" Text="{s:T home.changeServer}" />
                                         </Button>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Connection info while connected: country, protocol, ping, live speed and the leak test (ColituMainWindow.Refresh.cs). -->
+                                <Border
+                                    x:Name="ConnInfoCard"
+                                    Margin="0,16,0,0"
+                                    Padding="20,18,20,16"
+                                    AutomationProperties.Name="{s:T conn.title}"
+                                    Classes="panel"
+                                    IsVisible="False">
+                                    <StackPanel>
+                                        <TextBlock Classes="kicker" Text="{s:T conn.title}" />
+                                        <Grid Margin="0,12,0,0">
+                                            <TextBlock Classes="rowLabel" Text="{s:T conn.country}" />
+                                            <TextBlock
+                                                x:Name="ConnCountryText"
+                                                Classes="rowValue"
+                                                Text="…" />
+                                        </Grid>
+                                        <Grid Margin="0,10,0,0">
+                                            <TextBlock Classes="rowLabel" Text="{s:T conn.protocol}" />
+                                            <TextBlock x:Name="ConnProtocolText" Classes="rowValue" />
+                                        </Grid>
+                                        <Grid Margin="0,10,0,0">
+                                            <TextBlock Classes="rowLabel" Text="{s:T conn.ping}" />
+                                            <TextBlock x:Name="ConnPingText" Classes="rowValue" />
+                                        </Grid>
+                                        <StackPanel Margin="0,14,0,6" Orientation="Horizontal">
+                                            <Ellipse
+                                                Width="8"
+                                                Height="8"
+                                                Margin="0,0,6,0"
+                                                VerticalAlignment="Center"
+                                                Fill="#9F8CFF" />
+                                            <TextBlock
+                                                x:Name="ConnDownText"
+                                                FontSize="12.5"
+                                                Foreground="{StaticResource TextBrush}" />
+                                            <Ellipse
+                                                Width="8"
+                                                Height="8"
+                                                Margin="14,0,6,0"
+                                                VerticalAlignment="Center"
+                                                Fill="#5EE0A0" />
+                                            <TextBlock
+                                                x:Name="ConnUpText"
+                                                FontSize="12.5"
+                                                Foreground="{StaticResource TextBrush}" />
+                                        </StackPanel>
+                                        <v:ColituSpeedGraph
+                                            x:Name="ConnGraph"
+                                            Height="64"
+                                            AutomationProperties.Name="{s:T conn.graph}" />
+                                        <TextBlock
+                                            x:Name="ConnGraphNote"
+                                            Margin="0,4,0,0"
+                                            FontSize="12"
+                                            Foreground="{StaticResource DimBrush}"
+                                            TextWrapping="Wrap" />
+                                        <Border Margin="0,12,0,0" Classes="divider" />
+                                        <Grid Margin="0,10,0,0" ColumnDefinitions="*,Auto">
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="13"
+                                                Foreground="{StaticResource MutedBrush}"
+                                                Text="{s:T conn.leakHint}"
+                                                TextWrapping="Wrap" />
+                                            <Button
+                                                x:Name="LeakTestButton"
+                                                Grid.Column="1"
+                                                Height="40"
+                                                Margin="12,0,0,0"
+                                                Padding="16,0"
+                                                AutomationProperties.Name="{s:T conn.leakRun}"
+                                                Theme="{StaticResource SecondaryButton}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Ellipse
+                                                        x:Name="LeakTestSpinner"
+                                                        Margin="0,0,8,0"
+                                                        Classes="spinner"
+                                                        IsVisible="False" />
+                                                    <TextBlock FontSize="13" Text="{s:T conn.leakRun}" />
+                                                </StackPanel>
+                                            </Button>
+                                        </Grid>
+                                        <StackPanel
+                                            x:Name="LeakResults"
+                                            Margin="0,12,0,0"
+                                            AutomationProperties.LiveSetting="Polite"
+                                            IsVisible="False" />
                                     </StackPanel>
                                 </Border>
 
@@ -1778,7 +1972,7 @@
                         Margin="44,4,40,26"
                         IsVisible="False"
                         RowDefinitions="Auto,Auto,*">
-                        <Grid Margin="0,0,0,18" ColumnDefinitions="*,340">
+                        <Grid Margin="0,0,0,18" ColumnDefinitions="*,Auto,340">
                             <StackPanel>
                                 <TextBlock Classes="kicker" Text="{s:T locations.kicker}" />
                                 <TextBlock
@@ -1790,8 +1984,35 @@
                                     Margin="0,8,0,0"
                                     Classes="muted" />
                             </StackPanel>
-                            <Border
+                            <!-- Measures every location again now (MeasurePingsAsync force). -->
+                            <Button
+                                x:Name="PingAllButton"
                                 Grid.Column="1"
+                                Height="50"
+                                Margin="0,0,12,0"
+                                Padding="16,0"
+                                VerticalAlignment="Bottom"
+                                AutomationProperties.Name="{s:T locations.pingAll}"
+                                Theme="{StaticResource SecondaryButton}"
+                                ToolTip.Tip="{s:T locations.pingAllHint}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path
+                                        x:Name="PingAllIcon"
+                                        Width="14"
+                                        Height="14"
+                                        Margin="0,0,8,0"
+                                        Classes="stroke text"
+                                        Data="{StaticResource IconRefresh}" />
+                                    <Ellipse
+                                        x:Name="PingAllSpinner"
+                                        Margin="0,0,8,0"
+                                        Classes="spinner"
+                                        IsVisible="False" />
+                                    <TextBlock FontSize="13" Text="{s:T locations.pingAll}" />
+                                </StackPanel>
+                            </Button>
+                            <Border
+                                Grid.Column="2"
                                 VerticalAlignment="Bottom"
                                 Classes="field">
                                 <Grid ColumnDefinitions="Auto,*">
@@ -1841,6 +2062,7 @@
                         <Panel Grid.Row="2">
                             <ListBox
                                 x:Name="ServerList"
+                                AutomationProperties.Name="{s:T locations.title}"
                                 ItemTemplate="{StaticResource ServerRowTemplate}"
                                 Theme="{StaticResource PlainList}" />
                             <TextBlock
@@ -1907,6 +2129,48 @@
                                         <TextBlock x:Name="CurrentPlanBadgeText" Classes="badgeText" />
                                     </Border>
                                 </Grid>
+                            </Border>
+
+                            <!-- Traffic of the last 30 days, one bar per day (GET /me/usage/daily; hidden on older panels). -->
+                            <Border
+                                x:Name="UsageHistoryCard"
+                                Margin="0,16,0,0"
+                                Padding="22,18,22,16"
+                                AutomationProperties.Name="{s:T usage.title}"
+                                Classes="panel"
+                                IsVisible="False">
+                                <StackPanel>
+                                    <Grid>
+                                        <StackPanel>
+                                            <TextBlock Classes="kicker" Text="{s:T usage.title}" />
+                                            <TextBlock
+                                                x:Name="UsageHistoryTotal"
+                                                Margin="0,6,0,0"
+                                                FontSize="20"
+                                                FontWeight="SemiBold" />
+                                        </StackPanel>
+                                        <TextBlock
+                                            x:Name="UsageHistoryPeak"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Bottom"
+                                            Classes="small" />
+                                    </Grid>
+                                    <v:ColituUsageBars
+                                        x:Name="UsageBars"
+                                        Height="96"
+                                        Margin="0,14,0,0" />
+                                    <Grid Margin="0,6,0,0">
+                                        <TextBlock
+                                            x:Name="UsageFirstDay"
+                                            FontSize="12"
+                                            Foreground="{StaticResource DimBrush}" />
+                                        <TextBlock
+                                            HorizontalAlignment="Right"
+                                            FontSize="12"
+                                            Foreground="{StaticResource DimBrush}"
+                                            Text="{s:T usage.today}" />
+                                    </Grid>
+                                </StackPanel>
                             </Border>
 
                             <!-- Nothing is bought in the app, as on iOS and Android: the subscription
@@ -2143,6 +2407,22 @@
                                             x:Name="DevicesTitle"
                                             Margin="0,10,0,0"
                                             Classes="h2" />
+                                        <!-- Removes every device not seen for 30 days (never this one), after a confirmation. -->
+                                        <Button
+                                            x:Name="CleanupDevicesButton"
+                                            Height="40"
+                                            Margin="0,14,0,0"
+                                            Padding="16,0"
+                                            HorizontalAlignment="Left"
+                                            AutomationProperties.Name="{s:T account.cleanup}"
+                                            IsVisible="False"
+                                            Theme="{StaticResource SecondaryButton}"
+                                            ToolTip.Tip="{s:T account.cleanupHint}">
+                                            <TextBlock
+                                                x:Name="CleanupDevicesText"
+                                                FontSize="13"
+                                                Text="{s:T account.cleanup}" />
+                                        </Button>
                                         <ItemsControl x:Name="DeviceList" Margin="0,16,0,0">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="v:ColituDeviceRow">
@@ -2212,6 +2492,19 @@
                                                                 Tag="{Binding}"
                                                                 Theme="{StaticResource LinkButton}" />
                                                             <Button
+                                                                AutomationProperties.Name="{Binding RenameLabel}"
+                                                                Click="RenameDevice_Click"
+                                                                Tag="{Binding}"
+                                                                Theme="{StaticResource IconButton}"
+                                                                ToolTip.Tip="{s:T account.rename}">
+                                                                <Path
+                                                                    Width="14"
+                                                                    Height="14"
+                                                                    Classes="stroke"
+                                                                    Data="{StaticResource IconEdit}" />
+                                                            </Button>
+                                                            <Button
+                                                                AutomationProperties.Name="{Binding RemoveLabel}"
                                                                 Click="RemoveDevice_Click"
                                                                 Tag="{Binding}"
                                                                 Theme="{StaticResource IconButton}"
@@ -2905,6 +3198,7 @@
 
                                     <ScrollViewer
                                         x:Name="SupportNewForm"
+                                        DragDrop.AllowDrop="True"
                                         HorizontalScrollBarVisibility="Disabled"
                                         IsVisible="False"
                                         VerticalScrollBarVisibility="Auto">
@@ -2954,7 +3248,7 @@
                                                     HorizontalAlignment="Right"
                                                     VerticalAlignment="Center"
                                                     Classes="small"
-                                                    Text="{s:T support.attachHint}" />
+                                                    Text="{s:T support.dropHint}" />
                                             </Grid>
                                             <Border
                                                 Margin="0,16,0,0"
@@ -3017,6 +3311,7 @@
 
                                     <Grid
                                         x:Name="SupportThread"
+                                        DragDrop.AllowDrop="True"
                                         IsVisible="False"
                                         RowDefinitions="Auto,*,Auto">
                                         <Border
@@ -3057,6 +3352,16 @@
                                             BorderBrush="{StaticResource LineBrush}"
                                             BorderThickness="0,1,0,0">
                                             <StackPanel>
+                                                <!-- "Support is typing…" (peer_typing from the panel). -->
+                                                <TextBlock
+                                                    x:Name="SupportTypingText"
+                                                    Margin="4,0,0,8"
+                                                    AutomationProperties.LiveSetting="Polite"
+                                                    FontSize="12.5"
+                                                    FontStyle="Italic"
+                                                    Foreground="{StaticResource LilacBrush}"
+                                                    IsVisible="False"
+                                                    Text="{s:T support.typing}" />
                                                 <WrapPanel x:Name="SupportReplyFiles" />
                                                 <TextBlock
                                                     x:Name="SupportClosedNote"
@@ -3067,6 +3372,7 @@
                                                 <Grid x:Name="SupportComposer" ColumnDefinitions="Auto,*,Auto">
                                                     <Button
                                                         x:Name="SupportAttachReplyButton"
+                                                        AutomationProperties.Name="{s:T support.attach}"
                                                         Margin="0,0,8,0"
                                                         VerticalAlignment="Bottom"
                                                         Theme="{StaticResource IconButton}"
@@ -3828,18 +4134,66 @@
                 </Border>
             </Panel>
 
+            <!-- ── Rename a device (Account) ───────────────────────────────── -->
+            <Panel
+                x:Name="RenameOverlay"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    x:Name="RenameCard"
+                    Width="420"
+                    Padding="30,26"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <TextBlock Classes="h2" Text="{s:T account.rename}" />
+                        <TextBlock
+                            Margin="2,18,0,8"
+                            Classes="fieldLabel"
+                            Text="{s:T account.renameLabel}" />
+                        <Border Classes="field">
+                            <TextBox
+                                x:Name="RenameBox"
+                                AutomationProperties.Name="{s:T account.renameLabel}"
+                                Classes="bare"
+                                MaxLength="100" />
+                        </Border>
+                        <StackPanel
+                            Margin="0,22,0,0"
+                            HorizontalAlignment="Right"
+                            Orientation="Horizontal">
+                            <Button
+                                x:Name="RenameCancelButton"
+                                Height="44"
+                                Margin="0,0,10,0"
+                                Padding="18,0"
+                                Content="{s:T support.cancel}"
+                                Theme="{StaticResource SecondaryButton}" />
+                            <Button
+                                x:Name="RenameSaveButton"
+                                Height="44"
+                                Padding="22,0"
+                                Content="{s:T account.renameSave}"
+                                Theme="{StaticResource PrimaryButton}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Panel>
+
             <!-- Colitu Passport panels and rewards (built in ColituMainWindow.PassportSheets.cs / PassportReveal.cs). -->
             <Panel x:Name="PassportSheetLayer" IsVisible="False" />
             <Panel x:Name="PassportRevealLayer" IsVisible="False" />
 
             <!-- Window controls (always on top) -->
             <StackPanel
-                Margin="0,15,16,0"
+                Margin="0,12,16,0"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Orientation="Horizontal">
                 <Button
                     x:Name="MinimizeButton"
+                    AutomationProperties.Name="{s:T window.minimize}"
                     Theme="{StaticResource WindowButton}"
                     ToolTip.Tip="{s:T window.minimize}">
                     <!-- A flat line has no height to stretch: drawn at its own size. -->
@@ -3853,6 +4207,7 @@
                 <Button
                     x:Name="CloseButton"
                     Margin="6,0,0,0"
+                    AutomationProperties.Name="{s:T window.close}"
                     Theme="{StaticResource WindowCloseButton}"
                     ToolTip.Tip="{s:T window.close}">
                     <Path

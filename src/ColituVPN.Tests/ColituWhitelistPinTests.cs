@@ -38,7 +38,9 @@ public class ColituWhitelistPinTests
         virtualRow.IsWhitelistRow.Should().BeTrue();
         virtualRow.HasInfo.Should().BeTrue();
         virtualRow.Title.Should().Be(Loc.I["transport.vless-ws"]);
-        virtualRow.PingText.Should().BeEmpty();
+        // Since the 3.x refresh the Beyaz Liste row shows the node's ping too (none measured here).
+        virtualRow.PingText.Should().Be("— ms");
+        virtualRow.CanFavorite.Should().BeFalse();
         virtualRow.SelectionKey.Should().Be("whitelist:wl");
         normal.SelectionKey.Should().Be("wl");
     }

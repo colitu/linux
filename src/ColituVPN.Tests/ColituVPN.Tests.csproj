@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Avalonia.Headless" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
 

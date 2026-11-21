@@ -9,6 +9,10 @@ public sealed partial class Loc
         {
             Strings[key] = values;
         }
+        foreach (var (key, values) in RefreshStrings)
+        {
+            Strings[key] = values;
+        }
     }
 
     // key → [ru, tr, en]

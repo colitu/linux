@@ -25,6 +25,7 @@ public partial class ColituMainWindow
         }
         SplitSaveButton.Click += async (_, _) => await GuardAsync("SaveSplit", SaveSplitTunnelAsync);
         SplitChip.PointerReleased += (_, _) => Navigate("settings");
+        KeyboardClick(SplitChip, () => Navigate("settings"));
     }
 
     private string SelectedSplitMode() =>
