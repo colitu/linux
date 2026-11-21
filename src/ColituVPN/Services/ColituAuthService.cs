@@ -28,7 +28,7 @@ public sealed class ColituAuthService
 
     /// <summary>Config formats and transports this build can run: Xray for TCP transports, sing-box for Hysteria2.</summary>
     private static readonly string[] SupportedConfigFormats = ["xray-mobile-v1"];
-    private static readonly string[] SupportedProtocols = ["hysteria2", "vless-reality", "vless-xhttp", "trojan", "shadowsocks"];
+    private static readonly string[] SupportedProtocols = ["hysteria2", "vless-reality", "vless-xhttp", "trojan", "shadowsocks", "vless-ws", "vless-reality-relay"];
 
     // Direct to the panel: while the tunnel restarts the system proxy still points at the stopped core.
     private HttpClient _httpClient = CreateHttpClient();
@@ -122,7 +122,7 @@ public sealed class ColituAuthService
     private readonly string? _apiOverride;
 
     /// <summary>The API base the next request starts with (the one that last worked, from the signed list or the built-in bases).</summary>
-    public string ApiBaseUrl => _apiOverride ?? ColituEndpointList.Instance.Bases()[0];
+    public string ApiBaseUrl => _apiOverride ?? ColituEndpointList.Instance.UrlBase();
 
     /// <summary>Hosts the app talks to: they must stay reachable under the kill switch, failover targets included.</summary>
     public IEnumerable<string> PinnedUrls()
@@ -172,6 +172,7 @@ public sealed class ColituAuthService
         if (_apiOverride == null)
         {
             ColituEndpointList.Instance.StartBackgroundRefresh();
+            ColituEndpointList.Instance.StartSelfHeal();
         }
         LoadSession();
         if (string.IsNullOrWhiteSpace(_refreshToken))
@@ -961,6 +962,16 @@ public sealed class ColituAuthService
             {
                 var request = requestFactory();
                 isGet = request.Method == HttpMethod.Get;
+                if (ColituApiRelays.IsRelay(baseUrl))
+                {
+                    var relay = list.Relay(baseUrl)
+                        ?? throw new HttpRequestException(HttpRequestError.ConnectionError, "unknown relay");
+                    if (request.RequestUri != null)
+                    {
+                        request.RequestUri = ColituEndpointList.Rebase(request.RequestUri, known, ColituApiRelays.RelayUri(relay.Prefix).AbsoluteUri);
+                    }
+                    return SendViaRelayAsync(ColituApiRelays.ClientFor(relay), request, http.Timeout, token);
+                }
                 if (request.RequestUri != null)
                 {
                     request.RequestUri = ColituEndpointList.Rebase(request.RequestUri, known, baseUrl);
@@ -970,6 +981,25 @@ public sealed class ColituAuthService
             ex => ColituEndpointList.ShouldFailover(ex, isGet),
             list.RememberWorking,
             token);
+    }
+
+    /// <summary>A request through a relay client (which has no timeout of its own) with the caller's client timeout.</summary>
+    private static async Task<HttpResponseMessage> SendViaRelayAsync(HttpClient relayClient, HttpRequestMessage request, TimeSpan timeout, CancellationToken token)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+        if (timeout != Timeout.InfiniteTimeSpan)
+        {
+            limit.CancelAfter(timeout);
+        }
+        try
+        {
+            return await relayClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, limit.Token);
+        }
+        catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
+        {
+            // Same shape as an HttpClient timeout, so the failover treats it the same way.
+            throw new TaskCanceledException("relay request timed out", ex);
+        }
     }
 
     private HttpRequestMessage JsonRequest(HttpMethod method, string path, object body)

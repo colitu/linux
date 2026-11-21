@@ -17,9 +17,51 @@ public partial class ColituMainWindow
     /// <summary>Use-case filters over the location list, in the panel's order.</summary>
     private static readonly string[] Categories = ["all", "streaming", "gaming", "privacy", "speed", "torrent", "ai"];
 
+    private void ShowWhitelistInfo()
+    {
+        FillWhitelistInfo(WhitelistInfoWhen, Loc.I["whitelist.info.when"]);
+        FillWhitelistInfo(WhitelistInfoHow, Loc.I["whitelist.info.how"]);
+        FillWhitelistInfo(WhitelistInfoNote, Loc.I["whitelist.info.note"]);
+        WhitelistInfo.IsVisible = true;
+        ColituMotion.FadeIn(WhitelistInfo, 8);
+        WhitelistInfoOk.Focus();
+    }
+
+    /// <summary>"Label: text" with the label in bold (the copy keeps the label in the same string).</summary>
+    internal static void FillWhitelistInfo(TextBlock block, string text)
+    {
+        block.Inlines?.Clear();
+        block.Inlines ??= new Avalonia.Controls.Documents.InlineCollection();
+        var cut = text.IndexOfAny([':', '\uFF1A']);
+        if (cut > 0 && cut < 30)
+        {
+            block.Inlines.Add(new Avalonia.Controls.Documents.Run(text[..(cut + 1)]) { FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            block.Inlines.Add(new Avalonia.Controls.Documents.Run(text[(cut + 1)..]));
+        }
+        else
+        {
+            block.Inlines.Add(new Avalonia.Controls.Documents.Run(text));
+        }
+    }
+
     private void WireLocations()
     {
         ServerSearchBox.TextChanged += (_, _) => RenderServers();
+        // The info button inside a row (Beyaz Liste): opens the explainer; its press never reaches the row.
+        ServerList.AddHandler(Button.ClickEvent, (_, e) =>
+        {
+            if (e.Source is Control { } source && source.FindAncestorOfType<Button>(true) is { } button && button.Classes.Contains("whitelistInfo"))
+            {
+                e.Handled = true;
+                ShowWhitelistInfo();
+            }
+        });
+        WhitelistInfoOk.Click += (_, _) => WhitelistInfo.IsVisible = false;
+        WhitelistInfo.PointerPressed += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Source, WhitelistInfo)) return;
+            WhitelistInfo.IsVisible = false;
+        };
         ServerList.SelectionChanged += async (_, _) => await ServerSelectedAsync();
         // Containers are recycled while scrolling: the section-title look follows the row, not the container.
         ServerList.ContainerPrepared += (_, e) =>
@@ -135,6 +177,23 @@ public partial class ColituMainWindow
         bool RuHidden(ColituVpnServer server) =>
             !ColituRuServers.Visible(server, Loc.I.Language, _vpn.NetworkCountry)
             && server.Id != connectedId && !(server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection);
+        if (!filtered)
+        {
+            // Russia only: an extra "Beyaz Liste" row on top for each whitelist node; it connects with vless-ws.
+            // The search finds them too (country/city in every language, "whitelist" words).
+            foreach (var node in ColituLocationSort.WhitelistRows(_servers, _vpn.NetworkCountry))
+            {
+                var whitelistRow = ColituServerRow.Whitelist(node);
+                if (query.Length > 0 && !whitelistRow.Matches(query))
+                {
+                    continue;
+                }
+                whitelistRow.MarkState(node.Id == connectedId && _vpn.WhitelistSelected,
+                    node.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection && _vpn.WhitelistSelected);
+                rows.Add(whitelistRow);
+            }
+        }
+
         if (query.Length == 0 && !filtered)
         {
             rows.Add(auto);
@@ -143,7 +202,8 @@ public partial class ColituMainWindow
         ColituServerRow BuildRow(ColituVpnServer server, bool city = false)
         {
             var row = ColituServerRow.From(server, DisplayPingOf(server), city);
-            row.MarkState(server.Id == connectedId, server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection);
+            // The virtual Beyaz Liste row carries the selected / connected state when it is the chosen one.
+            row.MarkState(server.Id == connectedId && !_vpn.WhitelistSelected, server.Id == _vpn.SavedServerId && !_vpn.IsAutoSelection && !_vpn.WhitelistSelected);
             return row;
         }
 
@@ -216,7 +276,7 @@ public partial class ColituMainWindow
         try
         {
             ServerList.ItemsSource = rows;
-            ServerList.SelectedItem = rows.FirstOrDefault(row => row.IsAuto ? _vpn.IsAutoSelection : !row.IsHeader && !row.IsGroup && !_vpn.IsAutoSelection && row.Server?.Id == _vpn.SavedServerId);
+            ServerList.SelectedItem = rows.FirstOrDefault(row => row.IsAuto ? _vpn.IsAutoSelection : !row.IsHeader && !row.IsGroup && !_vpn.IsAutoSelection && row.Server?.Id == _vpn.SavedServerId && row.IsWhitelistRow == _vpn.WhitelistSelected);
             // Offline nodes cannot be picked (the WPF list disables their containers).
             Dispatcher.UIThread.Post(() =>
             {
@@ -322,14 +382,14 @@ public partial class ColituMainWindow
         }
 
         var server = row.IsAuto ? null : row.Server;
-        if (row.IsAuto ? _vpn.IsAutoSelection : !_vpn.IsAutoSelection && server?.Id == _vpn.SavedServerId)
+        if (row.IsAuto ? _vpn.IsAutoSelection : !_vpn.IsAutoSelection && server?.Id == _vpn.SavedServerId && _vpn.WhitelistSelected == row.IsWhitelistRow)
         {
             // Re-clicking the current choice just goes back home.
             Navigate("home");
             return;
         }
         var wasActive = _vpn.Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting;
-        if (server == null) _vpn.SelectAuto(); else _vpn.SelectServer(server);
+        if (server == null) _vpn.SelectAuto(); else _vpn.SelectServer(server, row.IsWhitelistRow);
         ApplyLocationCard();
 
         Navigate("home");
@@ -437,6 +497,27 @@ public sealed class ColituServerRow
     public Bitmap? EntryFlagBitmap { get; init; }
     public Bitmap? ExitFlagBitmap { get; init; }
     /// <summary>"Estimated · +1 hop": the ping of a route is measured to its entry node only.</summary>
+    /// <summary>The "What is the whitelist?" info button: only on the whitelist server's row.</summary>
+    public bool HasInfo => IsWhitelistRow;
+    /// <summary>The virtual "Beyaz Liste" row of a whitelist node (Russia only): no ping, info button, connects with vless-ws.</summary>
+    public bool IsWhitelistRow { get; set; }
+    public bool ShowPingBars => !IsWhitelistRow;
+    /// <summary>Key of this row in the selection ("whitelist:&lt;id&gt;" for the virtual row, the node id otherwise).</summary>
+    public string? SelectionKey => Server?.Id is { } id ? (IsWhitelistRow ? ColituLocationSort.WhitelistKey(id) : id) : null;
+
+    public static ColituServerRow Whitelist(ColituVpnServer server)
+    {
+        var row = From(server);
+        row.IsWhitelistRow = true;
+        row.Title = Loc.I["transport.vless-ws"];
+        // Several whitelist servers (CZ / FI / SE / TR) are told apart by their country and city.
+        var country = CountryName(server.CountryCode) ?? ColituServerNames.DisplayName(server.Country);
+        var city = ColituServerNames.City(server.City);
+        row.Subtitle = string.Join(" · ", new[] { country, city }.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase));
+        return row;
+    }
+    public string InfoText => Loc.I["whitelist.info.title"];
     public string PingNote => IsMultihop ? Loc.I["multihop.ping"] : "";
     public bool HasPingNote => IsMultihop;
     /// <summary>The node runs one of Colitu's ad-blocking DNS servers.</summary>
@@ -454,7 +535,7 @@ public sealed class ColituServerRow
     /// <summary>Ping from this computer in ms, measured outside the tunnel; null until measured.</summary>
     public int? Ping { get; init; }
     public bool PingVisible => !IsAuto && !IsHeader;
-    public string PingText => Ping is > 0 ? $"{Ping} ms" : "— ms";
+    public string PingText => IsWhitelistRow ? "" : Ping is > 0 ? $"{Ping} ms" : "— ms";
     public IBrush PingBrush => Ping switch
     {
         null => Unlit,
@@ -498,6 +579,10 @@ public sealed class ColituServerRow
     {
         var server = Server;
         var texts = new List<string?> { Title, Subtitle, server?.CountryCode };
+        if (IsWhitelistRow)
+        {
+            texts.AddRange(ColituLocationSort.WhitelistSearchWords);
+        }
         if (server != null)
         {
             texts.AddRange(ColituServerNames.Variants(server.DisplayName, server.CountryCode));

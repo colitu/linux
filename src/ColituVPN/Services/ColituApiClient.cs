@@ -26,10 +26,13 @@ public sealed class ColituApiClient
     /// </summary>
     internal const int MaxServerList = 1000;
 
-    public async Task<ColituServersResponse> GetServersAsync()
+    /// <param name="networkToken">The stored token of the network this PC is on now (X-Colitu-Network-Token); null after a network change.</param>
+    public async Task<ColituServersResponse> GetServersAsync(string? networkToken = null)
     {
         var subscription = ColituAuthService.Instance.CurrentSubscription;
-        var response = await ColituAuthService.Instance.GetAuthorizedJsonAsync<ColituServerListDto>("/servers") ?? new();
+        var auth = ColituAuthService.Instance;
+        using var answer = await auth.SendAuthorizedRequestAsync(() => ServersRequest(auth.ApiUri("/servers"), networkToken));
+        var response = await auth.ReadResponseJsonAsync<ColituServerListDto>(answer) ?? new();
         var servers = (response.Servers ?? [])
             .Where(server => !string.IsNullOrWhiteSpace(server.Id))
             .Take(MaxServerList)
@@ -51,8 +54,23 @@ public sealed class ColituApiClient
             NetworkHintsServers = ColituNetworkHintsPolicy.ParseProtocols(response.NetworkHints?.BlockedServers),
             AdaptiveConnect3 = ColituAdaptiveConnect3.ParseFeature(response.Features),
             AcEngine4 = ColituLmPlanner.ParseFeature(response.Features),
-            WhitelistProbe = ColituWhitelist.ParseProbe(response.WhitelistProbe)
+            WhitelistProbe = ColituWhitelist.ParseProbe(response.WhitelistProbe),
+            MeasureTargets = ColituIpBlock.Parse(response.MeasureTargets),
+            TlsProbeEvents = ColituIpBlock.ParseEventsFeature(response.Features)
         };
+    }
+
+    internal const string NetworkTokenHeader = "X-Colitu-Network-Token";
+
+    /// <summary><c>GET /servers</c>, with the network token header when there is one.</summary>
+    internal static HttpRequestMessage ServersRequest(Uri uri, string? networkToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (networkToken?.Trim() is { Length: > 0 and <= 512 } token)
+        {
+            request.Headers.TryAddWithoutValidation(NetworkTokenHeader, token);
+        }
+        return request;
     }
 
     /// <summary>
@@ -158,6 +176,71 @@ public sealed class ColituApiClient
         var path = multihop ? ConfigPathForRoute(server!.Id!) : ConfigPath(node, exclude);
         var envelope = await ColituAuthService.Instance.GetAuthorizedJsonAsync<ColituConfigEnvelopeDto>(path, token);
         return await BuildConfigAsync(envelope, server, multihop, ignoreGrace: false, token);
+    }
+
+    internal const string GeckoConfigPath = "/gecko/config";
+    internal const string GeckoSignatureHeader = "X-Gecko-Config-Signature";
+
+    /// <summary>
+    /// ColituGecko alpha settings (<c>GET /gecko/config</c>, same headers as <c>/config</c>): 200 the
+    /// configuration object (a secret: kept as the raw JSON, in memory only, never logged), 404 not
+    /// offered to this account, 503 offered but unavailable now. 401/403 and other failures throw as
+    /// for <c>/config</c>.
+    /// </summary>
+    public async Task<ColituGeckoConfigResult> GetGeckoConfigAsync(CancellationToken token = default)
+    {
+        try
+        {
+            using var response = await ColituAuthService.Instance.SendAuthorizedRequestAsync(
+                () => new HttpRequestMessage(HttpMethod.Get, ColituAuthService.Instance.ApiUri(GeckoConfigPath)));
+            // The exact bytes: the signature covers them, so nothing is decoded and encoded again.
+            var signature = response.Headers.TryGetValues(GeckoSignatureHeader, out var values) ? values.FirstOrDefault() : null;
+            return GeckoResult(await response.Content.ReadAsByteArrayAsync(token), signature);
+        }
+        catch (ColituApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return ColituGeckoConfigResult.NotOffered;
+        }
+        catch (ColituApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            return ColituGeckoConfigResult.Unavailable;
+        }
+    }
+
+    internal const string GeckoReportsPath = "/gecko/reports";
+
+    /// <summary><c>POST /gecko/reports</c> with a body from <see cref="ColituGeckoReports.Body"/>; the HTTP status.</summary>
+    public async Task<System.Net.HttpStatusCode> PostGeckoReportsAsync(string body, CancellationToken token = default)
+    {
+        try
+        {
+            using var response = await ColituAuthService.Instance.SendAuthorizedRequestAsync(
+                () => new HttpRequestMessage(HttpMethod.Post, ColituAuthService.Instance.ApiUri(GeckoReportsPath))
+                {
+                    Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+                });
+            return response.StatusCode;
+        }
+        catch (ColituApiException ex)
+        {
+            return ex.StatusCode;
+        }
+    }
+
+    /// <summary>
+    /// A 200 answer: offered with the bytes and signature as they came, or unavailable (with the reason)
+    /// when the signature header is missing or malformed or the body is not a usable configuration.
+    /// </summary>
+    internal static ColituGeckoConfigResult GeckoResult(byte[]? body, string? signature)
+    {
+        if (ColituGeckoRules.Sign(body, signature) is { } signed)
+        {
+            return new ColituGeckoConfigResult(ColituGeckoOffer.Offered, signed);
+        }
+        var reason = string.IsNullOrWhiteSpace(signature) ? "signature header missing"
+            : !ColituGeckoRules.IsSignatureShape(signature.Trim()) ? "signature header malformed"
+            : "configuration not usable";
+        return new ColituGeckoConfigResult(ColituGeckoOffer.Unavailable, null, reason);
     }
 
     /// <summary>
@@ -405,7 +488,8 @@ public sealed class ColituApiClient
     /// </summary>
     internal static ColituVpnConfigResponse? RestrictToVless(ColituVpnConfigResponse config)
     {
-        var vless = config.Candidates.Where(candidate => IsVless(candidate.Protocol)).ToList();
+        // The whitelist transports (CDN / L4 relay) cannot be carried through the mesh: not chain protocols.
+        var vless = config.Candidates.Where(candidate => IsVless(candidate.Protocol) && !IsWhitelistProtocol(candidate.Protocol)).ToList();
         if (vless.Count == 0)
         {
             return null;
@@ -429,9 +513,93 @@ public sealed class ColituApiClient
         };
     }
 
+    /// <summary>The configuration with only the candidates of <paramref name="protocol"/>; null when the node offers none.</summary>
+    internal static ColituVpnConfigResponse? RestrictToProtocol(ColituVpnConfigResponse config, string protocol)
+    {
+        var kept = config.Candidates.Where(candidate => string.Equals(candidate.Protocol, protocol, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (kept.Count == 0)
+        {
+            return null;
+        }
+        if (kept.Count == config.Candidates.Count)
+        {
+            return config;
+        }
+        return new ColituVpnConfigResponse
+        {
+            ServerId = config.ServerId,
+            Server = config.Server,
+            ConfigType = config.ConfigType,
+            ProtocolType = kept[0].Protocol,
+            RawConfig = string.Join(Environment.NewLine, kept.Select(item => item.ShareLink)),
+            Candidates = kept,
+            Revision = config.Revision,
+            ExpiresAt = config.ExpiresAt,
+            OfflineGraceUntil = config.OfflineGraceUntil,
+            Unlimited = config.Unlimited
+        };
+    }
+
+    /// <summary>The whitelist transports: vless-ws (CDN) and vless-reality-relay (L4 relay). Only for the Beyaz Liste row and whitelist mode.</summary>
+    internal static bool IsWhitelistProtocol(string? protocol) =>
+        string.Equals(protocol, "vless-ws", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(protocol, "vless-reality-relay", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The normal fallback order never contains a whitelist transport: they are dropped unless nothing else is
+    /// left (a node that only offers them).
+    /// </summary>
+    internal static ColituVpnConfigResponse WithoutWhitelistProtocols(ColituVpnConfigResponse config)
+    {
+        var kept = config.Candidates.Where(candidate => !IsWhitelistProtocol(candidate.Protocol)).ToList();
+        if (kept.Count == 0 || kept.Count == config.Candidates.Count)
+        {
+            return config;
+        }
+        return new ColituVpnConfigResponse
+        {
+            ServerId = config.ServerId,
+            Server = config.Server,
+            ConfigType = config.ConfigType,
+            ProtocolType = kept[0].Protocol,
+            RawConfig = string.Join(Environment.NewLine, kept.Select(item => item.ShareLink)),
+            Candidates = kept,
+            Revision = config.Revision,
+            ExpiresAt = config.ExpiresAt,
+            OfflineGraceUntil = config.OfflineGraceUntil,
+            Unlimited = config.Unlimited
+        };
+    }
+
+    /// <summary>Only the whitelist transports (relay first); null when the node offers none.</summary>
+    internal static ColituVpnConfigResponse? RestrictToWhitelist(ColituVpnConfigResponse config)
+    {
+        var kept = config.Candidates.Where(candidate => IsWhitelistProtocol(candidate.Protocol))
+            .OrderBy(candidate => string.Equals(candidate.Protocol, "vless-reality-relay", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToList();
+        if (kept.Count == 0)
+        {
+            return null;
+        }
+        return new ColituVpnConfigResponse
+        {
+            ServerId = config.ServerId,
+            Server = config.Server,
+            ConfigType = config.ConfigType,
+            ProtocolType = kept[0].Protocol,
+            RawConfig = string.Join(Environment.NewLine, kept.Select(item => item.ShareLink)),
+            Candidates = kept,
+            Revision = config.Revision,
+            ExpiresAt = config.ExpiresAt,
+            OfflineGraceUntil = config.OfflineGraceUntil,
+            Unlimited = config.Unlimited
+        };
+    }
+
     internal static bool IsVless(string? protocol) =>
         string.Equals(protocol, "vless-reality", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(protocol, "vless-xhttp", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(protocol, "vless-xhttp", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(protocol, "vless-ws", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(protocol, "vless-reality-relay", StringComparison.OrdinalIgnoreCase);
 
     // ── Rotating exit IP ────────────────────────────────────────────────────
 
@@ -889,7 +1057,9 @@ public static class ColituShareLinkBuilder
         // no other protocol rides on them.
         if (network is not ("tcp" or "ws" or "grpc" or "hysteria" or "xhttp")
             || (network == "hysteria") != (protocol == "hysteria2")
-            || (network == "xhttp") != (protocol == "vless-xhttp"))
+            || (network == "xhttp") != (protocol == "vless-xhttp")
+            || (protocol == "vless-ws" && network != "ws")
+            || (protocol == "vless-reality-relay" && network != "tcp"))
         {
             return null;
         }
@@ -900,6 +1070,7 @@ public static class ColituShareLinkBuilder
         switch (protocol)
         {
             case "vless-reality":
+            case "vless-reality-relay":
             {
                 var uuid = Str(credentials, "uuid");
                 var sni = Str(security, "server_name");
@@ -950,6 +1121,40 @@ public static class ColituShareLinkBuilder
                     "type=xhttp",
                     $"path={Uri.EscapeDataString(path)}",
                     $"mode={Uri.EscapeDataString(mode)}"
+                };
+                return $"vless://{Uri.EscapeDataString(uuid!)}@{address}:{port}?{string.Join("&", query)}{fragment}";
+            }
+            case "vless-ws":
+            {
+                // VLESS over WebSocket + TLS through a CDN relay; no Vision flow, no Reality.
+                var uuid = Str(credentials, "uuid");
+                var path = Str(transport, "path");
+                var sni = Str(security, "server_name");
+                if (sni.IsNullOrEmpty()) sni = host;
+                var wsHost = Str(transport, "host");
+                if (wsHost.IsNullOrEmpty()) wsHost = sni;
+                if (uuid.IsNullOrEmpty() || path.IsNullOrEmpty() || !path!.StartsWith('/')
+                    || (Str(security, "type") is { } secType && secType != "tls"))
+                {
+                    return null;
+                }
+                var alpn = "http/1.1";
+                if (security is { } sec && sec.TryGetProperty("alpn", out var alpnValue) && alpnValue.ValueKind == JsonValueKind.Array)
+                {
+                    var items = alpnValue.EnumerateArray().Where(a => a.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(a.GetString()))
+                        .Select(a => a.GetString()!).ToList();
+                    if (items.Count > 0) alpn = string.Join(",", items);
+                }
+                var query = new List<string>
+                {
+                    "encryption=none",
+                    "security=tls",
+                    $"sni={Uri.EscapeDataString(sni!)}",
+                    $"alpn={Uri.EscapeDataString(alpn)}",
+                    $"fp={Uri.EscapeDataString(Str(security, "fingerprint") ?? "firefox")}",
+                    "type=ws",
+                    $"host={Uri.EscapeDataString(wsHost!)}",
+                    $"path={Uri.EscapeDataString(path)}"
                 };
                 return $"vless://{Uri.EscapeDataString(uuid!)}@{address}:{port}?{string.Join("&", query)}{fragment}";
             }
@@ -1043,6 +1248,8 @@ internal sealed class ColituServerListDto
     [JsonPropertyName("features")] public Dictionary<string, System.Text.Json.JsonElement>? Features { get; set; }
     /// <summary>AC4 whitelist check: domestic hosts per country (kept raw: a bad value never fails the list).</summary>
     [JsonPropertyName("whitelist_probe")] public System.Text.Json.JsonElement? WhitelistProbe { get; set; }
+    /// <summary>TLS measurement targets (RU only, when configured; kept raw: a bad value never fails the list).</summary>
+    [JsonPropertyName("measure_targets")] public System.Text.Json.JsonElement? MeasureTargets { get; set; }
 }
 
 internal sealed class ColituNetworkHintsDto

@@ -166,6 +166,14 @@ public sealed partial class Loc : INotifyPropertyChanged
         // Colitu names of the transports; the technical names stay out of the UI.
         ["transport.hysteria2"] = ["Быстрый", "Hızlı", "Fast"],
         ["transport.vless-reality"] = ["Скрытный", "Gizli", "Stealth"],
+        ["whitelist.info.title"] = ["Что такое белый список?", "Beyaz liste nedir?", "What is the whitelist?"],
+        ["whitelist.info.lead"] = ["Некоторые мобильные операторы иногда пропускают только одобренные сайты. В это время обычные серверы не подключаются.", "Bazı mobil operatörler zaman zaman yalnızca onaylı sitelere izin verir. Bu sırada normal sunucular bağlanamaz.", "Some mobile carriers sometimes allow only approved sites. While that lasts, regular servers cannot connect."],
+        ["whitelist.info.when"] = ["Когда: Выбирайте, если в мобильном интернете почти ничего не открывается и работают лишь несколько крупных сервисов.", "Ne zaman: Mobil internette çoğu site açılmıyor, yalnızca birkaç büyük servis çalışıyorsa bunu seç.", "When: Pick this when most sites will not open on mobile data and only a few big services work."],
+        ["whitelist.info.how"] = ["Как: Подключение идёт к нашему серверу через разрешённую промежуточную сеть.", "Nasıl: Bağlantın, izin verilen bir aracı ağ üzerinden sunucumuza ulaşır.", "How: Your connection reaches our server through an allowed intermediate network."],
+        ["whitelist.info.note"] = ["Важно: Может работать медленнее обычных серверов. Когда ограничения снимут, вернитесь на обычный сервер.", "Bilmen gereken: Normal sunuculardan yavaş olabilir. Kısıtlama kalkınca normal sunucuya dön.", "Good to know: It can be slower than regular servers. Switch back once the restriction ends."],
+        ["whitelist.info.ok"] = ["Понятно", "Anladım", "Got it"],
+        ["transport.vless-ws"] = ["Белый список", "Beyaz Liste", "Whitelist"],
+        ["transport.vless-reality-relay"] = ["Белый список", "Beyaz Liste", "Whitelist"],
         ["transport.vless-xhttp"] = ["Устойчивый", "Dayanıklı", "Resilient"],
         ["transport.trojan"] = ["Классический", "Klasik", "Classic"],
         ["transport.shadowsocks"] = ["Лёгкий", "Hafif", "Light"],
@@ -360,7 +368,7 @@ public sealed partial class Loc : INotifyPropertyChanged
         ["settings.adBlock"] = ["Блокировка рекламы", "Reklam engelleme", "Ad blocking"],
         ["settings.adBlockHint"] = ["Реклама и трекеры блокируются на DNS-серверах Colitu. Журнал запросов не ведётся. Если какой-то сайт сломается, выключите.", "Reklam ve izleyiciler Colitu DNS sunucularında engellenir. Sorgu kaydı tutulmaz. Bir site bozulursa kapatın.", "Ads and trackers are blocked on Colitu’s DNS servers. No query log is kept. If a site breaks, turn it off."],
         ["privacy.title"] = ["Режим приватности", "Gizlilik modu", "Privacy mode"],
-        ["privacy.hint"] = ["Весь трафик через VPN. Если выключено, при сервере за пределами России российские сайты и IP-адреса идут напрямую, вне VPN, и видят ваш реальный IP-адрес.", "Tüm trafik VPN'den geçsin. Kapalıyken, Rusya dışındaki bir sunucuda Rus siteleri ve IP adresleri VPN dışından doğrudan gider ve gerçek IP adresinizi görür.", "Send all traffic through the VPN. When off, Russian sites and IP addresses go directly, outside the VPN, while you use a server outside Russia, and they see your real IP address."],
+        ["privacy.hint"] = ["Весь трафик, кроме российских сайтов, идёт через VPN. Российские сайты всегда открываются напрямую.", "Rus siteleri dışındaki tüm trafik VPN'den geçer. Rus siteleri her zaman doğrudan açılır.", "All traffic except Russian sites goes through the VPN. Russian sites always open directly."],
         ["settings.app"] = ["Приложение", "Uygulama", "App"],
         ["settings.startup"] = ["Запускать при входе в систему", "Oturum açılınca başlat", "Start at sign-in"],
         ["settings.startupHint"] = ["Colitu откроется в трее при входе в систему.", "Colitu, oturum açıldığında tepside başlar.", "Colitu starts in the tray when you sign in."],
@@ -582,6 +590,7 @@ public sealed partial class Loc : INotifyPropertyChanged
         ["err.noServers"] = ["Сейчас нет доступных серверов. Попробуйте чуть позже.", "Şu anda uygun sunucu yok. Biraz sonra tekrar deneyin.", "No server is available right now. Please try again shortly."],
         ["err.network"] = ["Нет связи с сервером Colitu. Проверьте интернет.", "Colitu sunucusuna ulaşılamadı. İnternet bağlantınızı kontrol edin.", "Can’t reach Colitu. Check your internet connection."],
         ["err.unreachable"] = ["Сервер не отвечает. Попробуйте другую локацию.", "Sunucu yanıt vermiyor. Başka bir konum deneyin.", "The server isn’t responding. Try another location."],
+        ["err.ipBlocked"] = ["Ваша сеть блокирует адрес этого сервера. Попробуйте другую локацию.", "Ağınız bu sunucunun adresini engelliyor. Başka bir konum deneyin.", "Your network blocks this server’s address. Try another location."],
         ["err.admin"] = ["Для режима TUN нужен пароль администратора (sudo). Введите его или выберите режим «Прокси».", "TUN modu için yönetici (sudo) parolası gerekiyor. Parolayı girin ya da Proxy modunu seçin.", "TUN mode needs the administrator (sudo) password. Enter it or switch to Proxy mode."],
         ["err.tunConfig"] = ["Режим TUN остановлен: настройки ядра VPN просят root записывать или читать файлы вне папки Colitu. Переподключитесь; если ошибка повторится, сбросьте настройки маршрутизации или используйте режим «Прокси».", "TUN modu durduruldu: VPN çekirdeğinin ayarları root'tan Colitu klasörü dışında dosya yazmasını ya da okumasını istiyor. Yeniden bağlanın; hata sürerse yönlendirme ayarlarını sıfırlayın ya da Proxy modunu kullanın.", "TUN mode was stopped: the VPN core's settings ask root to write or read files outside the Colitu folder. Reconnect; if it happens again, reset the routing settings or use Proxy mode."],
         ["err.tunUnsafe"] = ["Режим TUN недоступен в этой установке: ядро VPN находится в папке, которую может изменить не только root. Установите Colitu из пакета .deb/.rpm или используйте режим «Прокси».", "TUN modu bu kurulumda kullanılamıyor: VPN çekirdeği yalnızca root'un değiştirebileceği bir klasörde değil. Colitu'yu .deb/.rpm paketiyle kurun ya da Proxy modunu kullanın.", "TUN mode is not available in this installation: the VPN core is in a folder that more than root can change. Install Colitu from the .deb/.rpm package or use Proxy mode."],
@@ -670,6 +679,15 @@ public sealed partial class Loc : INotifyPropertyChanged
         ["rotation.home"] = ["Выход: {exit} · смена через {time}", "Çıkış: {exit} · değişimine {time}", "Exit: {exit} · changes in {time}"],
         ["rotation.homeDue"] = ["Выход: {exit} · меняется сейчас", "Çıkış: {exit} · şimdi değişiyor", "Exit: {exit} · changing now"],
         ["account.manualConfig"] = ["Ручная настройка", "Manuel yapılandırma", "Manual configuration"],
+        // ColituGecko, Colitu's own protocol: the protocol menu, the home card while connected over it, the connect errors.
+        ["home.protocol.hint"] = ["Нажмите, чтобы выбрать способ подключения", "Bağlantı yöntemini seçmek için tıklayın", "Click to choose the connection method"],
+        ["transport.auto"] = ["Автоматически", "Otomatik", "Automatic"],
+        ["transport.colitu-gecko"] = ["ColituGecko", "ColituGecko", "ColituGecko"],
+        ["gecko.autoExit"] = ["автовыход", "otomatik çıkış", "automatic exit"],
+        ["gecko.unavailable"] = ["сейчас недоступен", "şu an kullanılamıyor", "unavailable right now"],
+        ["connect.gecko"] = ["Подключаемся через ColituGecko…", "ColituGecko ile bağlanılıyor…", "Connecting with ColituGecko…"],
+        ["err.gecko"] = ["ColituGecko не смог подключиться в этой сети. Выберите «Автоматически», чтобы использовать другие протоколы.", "ColituGecko bu ağda bağlanamadı. Diğer protokoller için Otomatik'i seçin.", "ColituGecko couldn’t connect on this network. Pick Automatic to use the other protocols."],
+        ["err.geckoUnavailable"] = ["ColituGecko сейчас недоступен. Выберите «Автоматически», чтобы использовать другие протоколы.", "ColituGecko şu an kullanılamıyor. Diğer protokoller için Otomatik'i seçin.", "ColituGecko isn’t available right now. Pick Automatic to use the other protocols."],
     };
 }
 
@@ -722,7 +740,7 @@ public sealed class LocText : INotifyPropertyChanged
 /// </summary>
 public static class ColituTransportNames
 {
-    private static readonly HashSet<string> Known = ["hysteria2", "vless-reality", "vless-xhttp", "trojan", "shadowsocks"];
+    private static readonly HashSet<string> Known = ["hysteria2", "vless-reality", "vless-xhttp", "trojan", "shadowsocks", "vless-ws", "vless-reality-relay", "colitu-gecko"];
 
     public static string Of(string? protocol, Loc loc)
     {

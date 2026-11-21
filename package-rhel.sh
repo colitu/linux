@@ -438,6 +438,16 @@ populate_assets_netcore_mode() {
   fi
 
   download_geo_assets "$outroot" || echo "[!] Geo rules download failed (skipped)"
+
+  # ColituGecko (cmd/gecko-client of the private colitu-gecko repo, scripts/build-gecko-sidecar.sh).
+  # Optional: without the file the app reports "gecko-client missing" and connects as before.
+  local gecko_src="$(dirname "$0")/gecko-dosyalari/$rid/gecko-client"
+  if [[ -f "$gecko_src" ]]; then
+    install -D -m 755 "$gecko_src" "$outroot/bin/colitu-gecko/gecko-client"
+    echo "[+] gecko-client from $gecko_src"
+  else
+    echo "[i] no gecko-client for $rid (gecko-dosyalari/$rid/gecko-client); skipped, Gecko stays off"
+  fi
 }
 
 stage_runtime_assets() {
@@ -528,7 +538,7 @@ cp -a * %{buildroot}/opt/colitu-vpn/
 find %{buildroot}/opt/colitu-vpn -type d -exec chmod 0755 {} +
 find %{buildroot}/opt/colitu-vpn -type f -exec chmod 0644 {} +
 [ -f %{buildroot}/opt/colitu-vpn/ColituVPN ] && chmod 0755 %{buildroot}/opt/colitu-vpn/ColituVPN || :
-find %{buildroot}/opt/colitu-vpn/bin -type f \( -name xray -o -name sing-box -o -name colitu-core-root \) -exec chmod 0755 {} + 2>/dev/null || :
+find %{buildroot}/opt/colitu-vpn/bin -type f \( -name xray -o -name sing-box -o -name colitu-core-root -o -name gecko-client \) -exec chmod 0755 {} + 2>/dev/null || :
 [ -f %{buildroot}/opt/colitu-vpn/AmazTool ] && chmod 0755 %{buildroot}/opt/colitu-vpn/AmazTool || :
 # TUN mode refuses cores that group/others can write: never ship one.
 if [ -n "$(find %{buildroot}/opt/colitu-vpn ! -type l -perm /022 -print -quit)" ]; then echo "group/other-writable files in /opt/colitu-vpn" >&2; exit 1; fi

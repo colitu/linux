@@ -174,6 +174,31 @@
                     IsVisible="{Binding PingVisible}"
                     Orientation="Horizontal"
                     ToolTip.Tip="{Binding PingToolTip}">
+                    <!-- "What is the whitelist?": only on the Beyaz Liste row; a button swallows the press, so the row does not connect. -->
+                    <Button
+                        Width="44"
+                        Height="44"
+                        Margin="0,-8,6,-8"
+                        VerticalAlignment="Center"
+                        Classes="whitelistInfo"
+                        IsVisible="{Binding HasInfo}"
+                        Theme="{StaticResource IconButton}"
+                        ToolTip.Tip="{Binding InfoText}">
+                        <Panel Width="18" Height="18">
+                            <Ellipse Stroke="{StaticResource MutedBrush}" StrokeThickness="1.6" />
+                            <Path
+                                Data="M9,8.2 L9,13.2"
+                                Stretch="None"
+                                Stroke="{StaticResource MutedBrush}"
+                                StrokeLineCap="Round"
+                                StrokeThickness="1.8" />
+                            <Ellipse
+                                Width="2"
+                                Height="2"
+                                Margin="0,-8,0,0"
+                                Fill="{StaticResource MutedBrush}" />
+                        </Panel>
+                    </Button>
                     <StackPanel Margin="0,0,10,0" VerticalAlignment="Center">
                         <TextBlock
                             MinWidth="52"
@@ -191,7 +216,7 @@
                             Text="{Binding PingNote}"
                             TextAlignment="Right" />
                     </StackPanel>
-                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                    <StackPanel VerticalAlignment="Center" IsVisible="{Binding ShowPingBars}" Orientation="Horizontal">
                         <Border
                             Width="4"
                             Height="8"
@@ -1286,7 +1311,16 @@
                                     HorizontalAlignment="Center"
                                     Classes="chip"
                                     IsVisible="False">
-                                    <TextBlock x:Name="ProtocolChipText" Classes="chipText" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock x:Name="ProtocolChipText" Classes="chipText" />
+                                        <v:ColituGeckoLabel
+                                            x:Name="ProtocolChipGecko"
+                                            TextElement.FontSize="12"
+                                            TextElement.FontWeight="Bold"
+                                            IsVisible="False"
+                                            Palette="Dark" />
+                                        <TextBlock x:Name="ProtocolChipTail" Classes="chipText" IsVisible="False" Text=" ▾" />
+                                    </StackPanel>
                                 </Border>
                                 <!-- Multihop: "Entry FI to Exit DE"; rotating IP: current exit and the countdown to the next change. -->
                                 <Border
@@ -3636,6 +3670,125 @@
                             HorizontalAlignment="Stretch"
                             Content="{s:T sudo.cancel}"
                             Theme="{StaticResource SecondaryButton}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ── "What is the whitelist?": in-app explainer opened from the info button on the Beyaz Liste row ── -->
+            <Panel
+                x:Name="WhitelistInfo"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    x:Name="WhitelistInfoCard"
+                    Width="460"
+                    Padding="32,30"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <TextBlock
+                            Classes="h2"
+                            Text="{s:T whitelist.info.title}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Margin="0,10,0,0"
+                            Classes="muted"
+                            Text="{s:T whitelist.info.lead}"
+                            TextWrapping="Wrap" />
+                        <Grid Margin="0,20,0,0" ColumnDefinitions="44,*">
+                            <Panel
+                                Width="34"
+                                Height="34"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="16"
+                                    Height="16"
+                                    Data="M5,19 L5,15 M10,19 L10,11 M15,19 L15,7 M20,19 L20,3"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource LilacBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeLineCap="Round"
+                                    StrokeThickness="2" />
+                            </Panel>
+                            <TextBlock
+                                x:Name="WhitelistInfoWhen"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                FontSize="14"
+                                Foreground="{StaticResource TextBrush}"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid Margin="0,14,0,0" ColumnDefinitions="44,*">
+                            <Panel
+                                Width="34"
+                                Height="34"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="16"
+                                    Height="16"
+                                    Data="M6,19 A2.5,2.5 0 1 0 6,14 A2.5,2.5 0 0 0 6,19 M18,10 A2.5,2.5 0 1 0 18,5 A2.5,2.5 0 0 0 18,10 M8.5,16.5 L14,16.5 A3,3 0 0 0 14,10.5 L10,10.5 A3,3 0 0 1 10,7.5 L15.5,7.5"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource LilacBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeLineCap="Round"
+                                    StrokeThickness="1.8" />
+                            </Panel>
+                            <TextBlock
+                                x:Name="WhitelistInfoHow"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                FontSize="14"
+                                Foreground="{StaticResource TextBrush}"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid Margin="0,14,0,0" ColumnDefinitions="44,*">
+                            <Panel
+                                Width="34"
+                                Height="34"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="16"
+                                    Height="16"
+                                    Data="M12,4 A8,8 0 1 0 12,20 A8,8 0 0 0 12,4 M12,8 L12,12 L15,14"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource LilacBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeLineCap="Round"
+                                    StrokeThickness="1.8" />
+                            </Panel>
+                            <TextBlock
+                                x:Name="WhitelistInfoNote"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                FontSize="14"
+                                Foreground="{StaticResource TextBrush}"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                        <Button
+                            x:Name="WhitelistInfoOk"
+                            Height="50"
+                            Margin="0,24,0,0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Theme="{StaticResource PrimaryButton}">
+                            <TextBlock FontSize="15" Text="{s:T whitelist.info.ok}" />
+                        </Button>
                     </StackPanel>
                 </Border>
             </Panel>

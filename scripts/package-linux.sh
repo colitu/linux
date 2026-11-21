@@ -109,11 +109,31 @@ for f in geosite.dat geoip.dat srss/geosite-category-ru.srs srss/geoip-ru.srs; d
   [[ -s "$APP/bin/$f" ]] || { echo "bin/$f missing" >&2; exit 1; }
 done
 
+# ── ColituGecko sidecar (optional) ────────────────────────────────
+# gecko-client is built from Colitu's private colitu-gecko repository by scripts/build-gecko-sidecar.sh
+# (it writes gecko-dosyalari/linux-<arch>/gecko-client) and is pinned in scripts/gecko-sidecar.json
+# the way the cores are: its SHA-256 must match. While the pin is empty (the Gecko code is not in a
+# pushed commit yet) the packages ship without it and the app reports "gecko-client missing"
+# (Gecko stays off). It is not committed to this repository.
+GECKO_JSON="$ROOT/scripts/gecko-sidecar.json"
+GECKO_COMMIT="$(sed -n 's/.*"commit": *"\([0-9a-f]*\)".*/\1/p' "$GECKO_JSON" | head -n1)"
+if [[ -n "$GECKO_COMMIT" ]]; then
+  GECKO_FILE="$ROOT/gecko-dosyalari/linux-$ARCH/gecko-client"
+  GECKO_SHA256="$(sed -n "s/.*\"linux-$ARCH\": *\"\([0-9a-f]*\)\".*/\1/p" "$GECKO_JSON" | head -n1)"
+  [[ -n "$GECKO_SHA256" ]] || { echo "scripts/gecko-sidecar.json pins a commit but no SHA-256 for linux-$ARCH" >&2; exit 1; }
+  check_file "$GECKO_FILE" "$GECKO_SHA256"
+  mkdir -p "$APP/bin/colitu-gecko"
+  install -m 0755 "$GECKO_FILE" "$APP/bin/colitu-gecko/gecko-client"
+  echo "[+] gecko-client (colitu-gecko ${GECKO_COMMIT:0:12})"
+else
+  echo "[!] gecko-client is not pinned in scripts/gecko-sidecar.json: the packages ship without it (Gecko stays off)" >&2
+fi
+
 # ── Permissions ─────────────────────────────────────────────────────────
 find "$APP" -type d -exec chmod 0755 {} +
 find "$APP" -type f -exec chmod 0644 {} +
 chmod 0755 "$APP/ColituVPN"
-find "$APP/bin" -type f \( -name xray -o -name sing-box \) -exec chmod 0755 {} +
+find "$APP/bin" -type f \( -name xray -o -name sing-box -o -name gecko-client \) -exec chmod 0755 {} +
 # TUN mode: sudo runs this launcher (root:root 0755 in the package), never the core directly.
 install -m 0755 "$ROOT/scripts/colitu-core-root" "$APP/bin/colitu-core-root"
 # TUN mode refuses cores that group/others can write: never ship one.

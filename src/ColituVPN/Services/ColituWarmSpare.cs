@@ -57,7 +57,7 @@ public static class ColituWarmSpare
     public static readonly TimeSpan SingboxProbeInterval = TimeSpan.FromSeconds(5);
     public const int SingboxTolerance = 3000;
 
-    private static readonly string[] TcpOrder = ["vless-reality", "vless-xhttp", "trojan", "shadowsocks"];
+    private static readonly string[] TcpOrder = ["vless-reality", "vless-xhttp", "trojan", "shadowsocks", "vless-ws"];
 
     public static bool IsUdp(string? protocol) => protocol == "hysteria2";
 
@@ -66,8 +66,8 @@ public static class ColituWarmSpare
     /// (the app never gives it to Xray); sing-box has no XHTTP.
     /// </summary>
     public static bool RunsOn(string? protocol, bool singBox) => singBox
-        ? protocol is "hysteria2" or "vless-reality" or "trojan" or "shadowsocks"
-        : protocol is "vless-reality" or "vless-xhttp" or "trojan" or "shadowsocks";
+        ? protocol is "hysteria2" or "vless-reality" or "trojan" or "shadowsocks" or "vless-ws"
+        : protocol is "vless-reality" or "vless-xhttp" or "trojan" or "shadowsocks" or "vless-ws";
 
     /// <summary>
     /// The spare transport for <paramref name="primary"/>: the other family first (Hysteria2 behind

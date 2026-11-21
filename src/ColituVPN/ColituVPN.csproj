@@ -7,7 +7,7 @@
 		<AssemblyName>ColituVPN</AssemblyName>
 		<RootNamespace>v2rayN.Desktop</RootNamespace>
 		<!-- Colitu for Linux has its own version line; Directory.Build.props carries the core layer version. -->
-		<Version>1.7.5</Version>
+		<Version>1.8.0</Version>
 		<Product>Colitu VPN</Product>
 		<Company>COLITU LIMITED</Company>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -22,6 +22,8 @@
 		<AssemblyMetadata Include="ColituAdBlockDoh" Value="$(ColituAdBlockDoh)" />
 		<!-- Mirror origins for the API failover are not in the public source either: release builds set the ColituMirrors environment variable (a comma-separated list of https origins). -->
 		<AssemblyMetadata Include="ColituMirrors" Value="$(ColituMirrors)" />
+		<!-- Built-in API relays (id|host:port|sni|region|wl;...), from the ColituRelays environment variable; optional. -->
+		<AssemblyMetadata Include="ColituRelays" Value="$(ColituRelays)" />
 	</ItemGroup>
 
 	<ItemGroup>

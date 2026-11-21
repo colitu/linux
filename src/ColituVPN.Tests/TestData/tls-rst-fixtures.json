@@ -1,0 +1,29 @@
+{
+  "spec": "F:/DEV/wt/TLS-PROBE-SPEC.md (colitu-panel docs/tls-rst-fixtures.json is the canonical copy). classify: results of one round probe on one server; ip_blocked when at least 2 tls_rst on distinct ports. schedule: measurement run due.",
+  "version": 1,
+  "classify": [
+    {"name": "two ports reset", "results": [{"port": 443, "tls": "tls_rst"}, {"port": 2053, "tls": "tls_rst"}], "ip_blocked": true},
+    {"name": "three ports, two reset one timeout", "results": [{"port": 443, "tls": "tls_rst"}, {"port": 2053, "tls": "timeout"}, {"port": 4433, "tls": "tls_rst"}], "ip_blocked": true},
+    {"name": "one reset one ok", "results": [{"port": 443, "tls": "tls_rst"}, {"port": 2053, "tls": "ok"}], "ip_blocked": false},
+    {"name": "one reset only", "results": [{"port": 443, "tls": "tls_rst"}], "ip_blocked": false},
+    {"name": "same port twice", "results": [{"port": 443, "tls": "tls_rst"}, {"port": 443, "tls": "tls_rst"}], "ip_blocked": false},
+    {"name": "timeouts do not count", "results": [{"port": 443, "tls": "timeout"}, {"port": 2053, "tls": "timeout"}], "ip_blocked": false},
+    {"name": "tcp failures do not count", "results": [{"port": 443, "tls": "tcp_fail"}, {"port": 2053, "tls": "tcp_fail"}], "ip_blocked": false},
+    {"name": "all ok", "results": [{"port": 443, "tls": "ok"}, {"port": 2053, "tls": "ok"}], "ip_blocked": false},
+    {"name": "nothing probed", "results": [], "ip_blocked": false}
+  ],
+  "schedule": [
+    {"name": "never run", "vpn_on": false, "targets": 6, "last_run_age_h": null, "interval_h": 6, "due": true},
+    {"name": "interval passed", "vpn_on": false, "targets": 6, "last_run_age_h": 6.0, "interval_h": 6, "due": true},
+    {"name": "too soon", "vpn_on": false, "targets": 6, "last_run_age_h": 5.9, "interval_h": 6, "due": false},
+    {"name": "vpn on", "vpn_on": true, "targets": 6, "last_run_age_h": null, "interval_h": 6, "due": false},
+    {"name": "no targets", "vpn_on": false, "targets": 0, "last_run_age_h": null, "interval_h": 6, "due": false},
+    {"name": "other interval", "vpn_on": false, "targets": 2, "last_run_age_h": 12.5, "interval_h": 12, "due": true}
+  ],
+  "events": [
+    {"name": "measure ok", "tls": "ok", "measure": true, "port": 4443, "expect": {"kind": "probe", "outcome": "ok", "reason": "", "probe": "tls", "port": 4443, "measure": true}},
+    {"name": "classifier reset", "tls": "tls_rst", "measure": false, "port": 443, "expect": {"kind": "probe", "outcome": "fail", "reason": "tls_rst", "probe": "tls", "port": 443, "measure": false}},
+    {"name": "measure timeout", "tls": "timeout", "measure": true, "port": 2053, "expect": {"kind": "probe", "outcome": "fail", "reason": "timeout", "probe": "tls", "port": 2053, "measure": true}},
+    {"name": "tcp failure", "tls": "tcp_fail", "measure": true, "port": 2053, "expect": {"kind": "probe", "outcome": "fail", "reason": "refused", "probe": "tls", "port": 2053, "measure": true}}
+  ]
+}

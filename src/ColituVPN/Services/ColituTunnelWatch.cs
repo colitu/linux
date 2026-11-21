@@ -264,6 +264,23 @@ public static class ColituTransportOrder
     }
 
     /// <summary>
+    /// The key of one endpoint in the round's TCP latency map: protocol and port, so two endpoints of one
+    /// protocol (the 4443 canary next to 443) keep two latencies instead of the second overwriting the first.
+    /// </summary>
+    public static string EndpointKey(string protocol, int port) => $"{protocol}:{port}";
+
+    /// <summary>The round's TCP latency by <see cref="EndpointKey"/> (-1 = no answer).</summary>
+    public static Dictionary<string, int> EndpointLatency(IEnumerable<(string Protocol, int Port, int Ms)> results)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (protocol, port, ms) in results)
+        {
+            map[EndpointKey(protocol, port)] = ms;
+        }
+        return map;
+    }
+
+    /// <summary>
     /// Every TCP transport of the server was measured and none answered (outside the tunnel): the server
     /// itself is out, not one transport. Hysteria2 is not measured (UDP) and does not count.
     /// </summary>

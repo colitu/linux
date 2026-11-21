@@ -106,7 +106,7 @@ public class ColituSplitTunnelTests
     }
 
     [Fact]
-    public void Exclude_Tun_SendsAppsSitesAndAddressesDirect_BeforeTheRegionalRules()
+    public void Exclude_Tun_SendsAppsSitesAndAddressesDirect_AfterTheRussianRules()
     {
         var rules = ColituVpnService.BuildColituRoutingRules(Prefs("exclude", tun: true, apps: ["firefox"], domains: ["example.com"], ips: ["203.0.113.0/24"]));
         var domains = rules.Single(r => r.Id == "colitu-split-domains");
@@ -116,7 +116,7 @@ public class ColituSplitTunnelTests
         var apps = rules.Single(r => r.Id == "colitu-split-apps");
         apps.Process.Should().Equal("firefox");
         apps.InboundTag.Should().Equal("tun");
-        rules.FindIndex(r => r.Id == "colitu-split-domains").Should().BeLessThan(rules.FindIndex(r => r.Id == "colitu-ru-direct-domain"));
+        rules.FindIndex(r => r.Id == "colitu-ru-direct-ip").Should().BeLessThan(rules.FindIndex(r => r.Id == "colitu-split-domains"));
         rules.Should().NotContain(r => r.Id == "colitu-split-rest");
         rules.Single(r => r.Id == "colitu-ru-direct-domain").Enabled.Should().BeTrue();
     }
@@ -140,7 +140,7 @@ public class ColituSplitTunnelTests
         rest.OutboundTag.Should().Be(Global.DirectTag);
         rest.Port.Should().Be("1-65535");
         rest.InboundTag.Should().Equal("tun");
-        rules.Single(r => r.Id == "colitu-ru-direct-domain").Enabled.Should().BeFalse("selected apps keep their Russian sites in the tunnel");
+        rules.Single(r => r.Id == "colitu-ru-direct-domain").Enabled.Should().BeTrue("Russian destinations are direct even in include mode");
 
         var proxyRest = ColituVpnService.BuildColituRoutingRules(Prefs("include", tun: false, domains: ["example.com"])).Last();
         proxyRest.Id.Should().Be("colitu-split-rest");

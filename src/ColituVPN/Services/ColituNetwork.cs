@@ -544,6 +544,32 @@ public static class ColituNetwork
         }
     }
 
+    /// <summary>
+    /// The network the uplink (<see cref="ProbeInterfaceName"/>) is on: its name, IPv4 addresses and IPv4
+    /// gateways. Another Wi-Fi network (a phone hotspot) on the same interface changes it. Null when unknown.
+    /// </summary>
+    public static string? PhysicalNetworkFingerprint()
+    {
+        try
+        {
+            if (ProbeInterfaceName() is not { } name
+                || NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(item => item.Name == name) is not { } adapter)
+            {
+                return null;
+            }
+            var properties = adapter.GetIPProperties();
+            var addresses = properties.UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork)
+                .Select(item => item.Address.ToString()).Order(StringComparer.Ordinal);
+            var gateways = properties.GatewayAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork && !item.Address.Equals(IPAddress.Any))
+                .Select(item => item.Address.ToString()).Order(StringComparer.Ordinal);
+            return $"{name}|{string.Join(",", addresses)}|{string.Join(",", gateways)}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>A tunnel / container / bridge interface; PPP and WWAN links are real uplinks and not counted.</summary>
     internal static bool IsOtherVpnInterface(string name) =>
         VirtualPrefixes.Where(prefix => prefix != "ppp").Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));

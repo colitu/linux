@@ -33,6 +33,12 @@ public sealed class ColituAcEvent
     [JsonPropertyName("foreign_total"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? ForeignTotal { get; set; }
     [JsonPropertyName("domestic_ok"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? DomesticOk { get; set; }
     [JsonPropertyName("domestic_total"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? DomesticTotal { get; set; }
+    /// <summary>probe: "tls" for a TLS probe (TLS-PROBE-SPEC §4); absent for the TCP probes. Only sent while the panel sets features.tls_probe_events.</summary>
+    [JsonPropertyName("probe"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Probe { get; set; }
+    /// <summary>probe (tls): the endpoint's port.</summary>
+    [JsonPropertyName("port"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? Port { get; set; }
+    /// <summary>probe (tls): true for a measurement run (panel targets), false for the ip_blocked classifier.</summary>
+    [JsonPropertyName("measure"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Measure { get; set; }
 
     /// <summary>When the event was queued (not sent): decides which probe of an hour is the last one.</summary>
     [JsonIgnore] public DateTimeOffset Stamp { get; set; }
@@ -48,7 +54,7 @@ public static class ColituAcSpec
     public static readonly TimeSpan MinSendInterval = TimeSpan.FromHours(1);
 
     public static readonly string[] Kinds = ["connect", "recovery", "switch", "drop", "probe", "choice", "whitelist"];
-    public static readonly string[] Protocols = ["vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic"];
+    public static readonly string[] Protocols = ["vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic", "vless-ws", "vless-reality-relay"];
     public static readonly string[] Reasons =
         ["timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network", "core_crash", "auth", "quota", "network_change", "resume", "other"];
     /// <summary>Who ordered the servers of an automatic connect: the on-device AC 4 model, the app's own AC 3 rules, or the panel (no list yet).</summary>
@@ -157,6 +163,21 @@ public static class ColituAcSpec
                 result.NodeId = node;
                 result.Protocol = Protocol(source.Protocol);
                 result.Outcome = outcome;
+                if (string.Equals(source.Probe?.Trim(), "tls", StringComparison.OrdinalIgnoreCase))
+                {
+                    // TLS probe: reason "" when ok, else tls_rst | timeout | refused; ms for both outcomes.
+                    if (source.Port is not (>= 1 and <= 65535))
+                    {
+                        return null;
+                    }
+                    var tlsReason = source.Reason?.Trim().ToLowerInvariant();
+                    result.Reason = outcome == "ok" ? "" : tlsReason is "tls_rst" or "timeout" or "refused" ? tlsReason : "timeout";
+                    result.Ms = ClampMs(source.Ms);
+                    result.Probe = "tls";
+                    result.Port = source.Port;
+                    result.Measure = source.Measure ?? false;
+                    return result;
+                }
                 result.Ms = outcome == "ok" ? ClampMs(source.Ms) : null;
                 return result;
             case "choice":

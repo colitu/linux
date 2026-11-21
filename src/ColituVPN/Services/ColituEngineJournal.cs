@@ -30,6 +30,8 @@ public sealed class ColituEngineJournal
     public const string PingRound = "ping_round";
     public const string Hidden = "hidden";
     public const string Whitelist = "whitelist";
+    /// <summary>The Gecko step of a connect (Adaptive Connect: normal → gecko → whitelist).</summary>
+    public const string Gecko = ColituGeckoRules.StepName;
 
     private static readonly JsonSerializerOptions Options = new()
     {

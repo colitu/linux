@@ -381,9 +381,19 @@ public class ColituAdaptiveConnectTests
     {
         ColituVpnService.TrafficProbeUrls.Should().HaveCount(3);
         ColituVpnService.TrafficProbeUrls.Should().OnlyContain(url => !url.Contains("colitu", StringComparison.OrdinalIgnoreCase));
-        ColituVpnService.IsTrafficProbeSuccess(204).Should().BeTrue();
-        ColituVpnService.IsTrafficProbeSuccess(200).Should().BeTrue();
-        ColituVpnService.IsTrafficProbeSuccess(302).Should().BeFalse();
-        ColituVpnService.IsTrafficProbeSuccess(403).Should().BeFalse();
+        const string g204 = "https://www.gstatic.com/generate_204";
+        const string apple = "https://www.apple.com/library/test/success.html";
+        const string msft = "http://www.msftconnecttest.com/connecttest.txt";
+        ColituVpnService.IsTrafficProbeSuccess(g204, 204, "").Should().BeTrue();
+        ColituVpnService.IsTrafficProbeSuccess(apple, 200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>").Should().BeTrue();
+        ColituVpnService.IsTrafficProbeSuccess(msft, 200, "Microsoft Connect Test").Should().BeTrue();
+        // A server that refused us and handed the connection to its cover site answers 200 with its own page.
+        const string cover = "<!doctype html><html><head><title>Welcome</title></head><body>nginx</body></html>";
+        ColituVpnService.IsTrafficProbeSuccess(g204, 200, cover).Should().BeFalse();
+        ColituVpnService.IsTrafficProbeSuccess(g204, 204, "x").Should().BeFalse();
+        ColituVpnService.IsTrafficProbeSuccess(apple, 200, cover).Should().BeFalse();
+        ColituVpnService.IsTrafficProbeSuccess(msft, 200, cover).Should().BeFalse();
+        ColituVpnService.IsTrafficProbeSuccess(msft, 302, "Microsoft Connect Test").Should().BeFalse();
+        ColituVpnService.IsTrafficProbeSuccess("https://example.test/", 200, "ok").Should().BeFalse();
     }
 }

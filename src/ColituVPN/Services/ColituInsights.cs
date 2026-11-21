@@ -164,6 +164,12 @@ public sealed class ColituInsights
     private DateTimeOffset _lastFailedSend = DateTimeOffset.MinValue;
     private DateTimeOffset _lastFailedEventSend = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// The last GET /servers had <c>features.tls_probe_events</c>: the panel accepts the TLS probe fields. A panel
+    /// without them refuses the whole report (unknown fields), so until then TLS probe events are neither queued nor sent.
+    /// </summary>
+    public bool TlsProbeEvents { get; set; }
+
     public ColituInsights(Func<string> path, Func<long>? ticks = null, Func<bool>? existingInstall = null)
     {
         _path = path;
@@ -458,10 +464,15 @@ public sealed class ColituInsights
             {
                 return;
             }
+            if (item.Probe != null && !TlsProbeEvents)
+            {
+                return;
+            }
             if (item.Kind == "probe")
             {
                 var hour = stamp.ToUnixTimeSeconds() / 3600;
                 state.Events.RemoveAll(other => other.Kind == "probe" && other.NodeId == item.NodeId && other.Protocol == item.Protocol
+                    && other.Probe == item.Probe && other.Port == item.Port && other.Measure == item.Measure
                     && other.Stamp != default && other.Stamp.ToUnixTimeSeconds() / 3600 == hour);
             }
             state.Events.Add(item);
@@ -492,6 +503,15 @@ public sealed class ColituInsights
                 || now - _lastFailedEventSend < ColituInsightSpec.RetryAfterFailure)
             {
                 return null;
+            }
+            if (!TlsProbeEvents && state.Events.RemoveAll(item => item.Probe != null || item.Port != null || item.Measure != null) > 0)
+            {
+                // Queued while the panel accepted them, then a panel without the fields: never sent to it.
+                Save();
+                if (state.Events.Count == 0)
+                {
+                    return null;
+                }
             }
             return ComposeEvents(state, appVersion, networkToken, networkType);
         }

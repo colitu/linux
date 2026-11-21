@@ -188,4 +188,24 @@ public class ColituReachabilityTests
         germany.Servers[0].Id.Should().Be("de-muc");
         germany.Servers.Skip(1).Select(server => server.Id).Should().Equal("de-ber", "de-fra");
     }
+
+    [Fact]
+    public void UnreachableWhitelistServers_StillGetRows_AndWhitelistModeKeepsThemVisible()
+    {
+        var ids = new[] { "a", "b", "c", "d", "x", "y", "z", "w", "v", "u" };
+        var servers = ids.Select(id => new ColituVpnServer
+        {
+            Id = id, Name = id, Available = true, WhitelistOk = id is "a" or "b" or "c" or "d",
+            Protocols = id is "a" or "b" or "c" or "d" ? ["vless-reality", "vless-reality-relay"] : ["vless-reality"],
+        }).ToList();
+        var reach = new ColituReachability();
+        Dictionary<string, int?> round = ids.ToDictionary(id => id, id => id is "a" or "b" ? null : (int?)40);
+        reach.RecordRound(round, vpnOff: true, T0);
+        reach.RecordRound(round, vpnOff: true, T0.AddSeconds(30));
+
+        reach.Hidden(ids).Should().BeEquivalentTo(["a", "b"]);
+        ColituLocationSort.WhitelistRows(servers, "RU").Select(server => server.Id).Should().Equal("a", "b", "c", "d");
+        reach.Hidden(ids, ColituLocationSort.WhitelistKeepVisible(servers, whitelistMode: true)).Should().BeEmpty();
+        reach.Hidden(ids, ColituLocationSort.WhitelistKeepVisible(servers, whitelistMode: false)).Should().BeEquivalentTo(["a", "b"]);
+    }
 }

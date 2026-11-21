@@ -37,6 +37,8 @@ public partial class ColituMainWindow : Window
         Loc.I.Changed += OnLanguageChanged;
 
         _vpn.StatusChanged += _ => Dispatcher.UIThread.Post(ApplyStatus);
+        // ColituGecko comes and goes in the protocol menu with the panel's offer.
+        _vpn.GeckoOfferChanged += () => Dispatcher.UIThread.Post(ApplyStatus);
         _vpn.Notice += key => Dispatcher.UIThread.Post(() =>
         {
             ShowToast(Loc.I[key], key.StartsWith("err", StringComparison.Ordinal));

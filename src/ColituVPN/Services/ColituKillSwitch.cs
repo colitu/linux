@@ -150,7 +150,17 @@ public sealed class ColituKillSwitch
         /// only the app, only UDP 53, for server names when both DoH services are blocked (China).
         /// </summary>
         public IReadOnlyCollection<IPAddress> AdapterResolvers { get; init; } = [];
+
+        /// <summary>
+        /// ColituGecko alpha: the entry addresses of the panel's Gecko configuration (a CDN entry's
+        /// front name resolved). gecko-client runs as the app's user, so only that uid gets them,
+        /// on the entries' own ports, TCP and UDP (QUIC).
+        /// </summary>
+        public IReadOnlyCollection<GeckoEntry> Gecko { get; init; } = [];
     }
+
+    /// <summary>One Gecko entry address and its port.</summary>
+    public sealed record GeckoEntry(IPAddress Address, int Port);
 
     /// <summary>The cores' DNS ports: plain DNS, DNS-over-HTTPS, DNS-over-TLS.</summary>
     internal const string CoreResolverTcpPorts = "{ 53, 443, 853 }";
@@ -195,6 +205,12 @@ public sealed class ColituKillSwitch
 
         var rules = new StringBuilder();
         rules.Append($"table inet {Table} {{").Append('\n');
+        // Whitelist check probes (AllowWhitelistProbesAsync): addresses the app resolved, each for 10 s.
+        rules.Append($"  set {WhitelistProbeSet4} {{ type ipv4_addr; flags timeout; }}").Append('\n');
+        rules.Append($"  set {WhitelistProbeSet6} {{ type ipv6_addr; flags timeout; }}").Append('\n');
+        // TLS probes (AllowTlsProbesAsync): address and port pairs the app resolved, each for 10 s.
+        rules.Append($"  set {TlsProbeSet4} {{ type ipv4_addr . inet_service; flags timeout; }}").Append('\n');
+        rules.Append($"  set {TlsProbeSet6} {{ type ipv6_addr . inet_service; flags timeout; }}").Append('\n');
         rules.Append("  chain output {").Append('\n');
         rules.Append("    type filter hook output priority 0; policy drop;").Append('\n');
         rules.Append("    oifname \"lo\" accept").Append('\n');
@@ -242,6 +258,19 @@ public sealed class ColituKillSwitch
         // The panel API: only the app, only HTTPS on the ports its URLs use. (An API host behind a
         // CDN shares its address with other sites on the same port; that much stays open to the user.)
         AppendAddressRule(rules, app, api, $" tcp dport {PortMatch(apiPorts)}");
+        // ColituGecko alpha: gecko-client (the app's uid) dials the Gecko entries itself. In TUN mode its
+        // connections also go out marked through the TUN's direct rule; these rules keep it working
+        // when a mark is missing (never for any other address or port). Needs the uid.
+        if (appUid is not null && allowed.Gecko.Count > 0)
+        {
+            var geckoAddresses = Normalize(allowed.Gecko.Where(entry => entry.Port is > 0 and <= 65535).Select(entry => entry.Address)).ToList();
+            var geckoPorts = allowed.Gecko.Where(entry => entry.Port is > 0 and <= 65535).Select(entry => entry.Port).Distinct().Order().ToList();
+            if (geckoAddresses.Count > 0 && geckoPorts.Count > 0)
+            {
+                AppendAddressRule(rules, app, geckoAddresses, $" tcp dport {PortMatch(geckoPorts)}");
+                AppendAddressRule(rules, app, geckoAddresses, $" udp dport {PortMatch(geckoPorts)}");
+            }
+        }
         // Public resolvers: the cores' own lookups (root only), DNS / DoH / DoT.
         AppendAddressRule(rules, root, resolvers, " udp dport 53");
         AppendAddressRule(rules, root, resolvers, $" tcp dport {CoreResolverTcpPorts}");
@@ -252,6 +281,17 @@ public sealed class ColituKillSwitch
         // resolvers can still leave outside the tunnel (the resolver sees the real IP and the names
         // asked). Plain DNS, DoT, QUIC and every other port and address stay blocked.
         AppendAddressRule(rules, app, resolvers, " tcp dport 443");
+        // The whitelist check (TCP 443 to a few foreign and domestic sites, outside the tunnel): only
+        // the app's uid, only the addresses it just resolved for one check, and only for 10 s each.
+        if (appUid is { } probeUid)
+        {
+            rules.Append($"    meta skuid {probeUid} ip daddr @{WhitelistProbeSet4} tcp dport 443 accept").Append('\n');
+            rules.Append($"    meta skuid {probeUid} ip6 daddr @{WhitelistProbeSet6} tcp dport 443 accept").Append('\n');
+            // The TLS probes (ip_blocked classifier, panel measurement targets): only the app's uid, only TCP to
+            // the exact address and port pairs it just resolved, for 10 s each.
+            rules.Append($"    meta skuid {probeUid} ip daddr . tcp dport @{TlsProbeSet4} accept").Append('\n');
+            rules.Append($"    meta skuid {probeUid} ip6 daddr . tcp dport @{TlsProbeSet6} accept").Append('\n');
+        }
         // Networks the user excluded from the VPN: every program reaches them directly.
         if (bypass4.Count > 0)
         {
@@ -282,6 +322,137 @@ public sealed class ColituKillSwitch
             chmod 0644 {{MarkerFile}}
             exit 0
             """;
+    }
+
+    internal const string WhitelistProbeSet4 = "wlprobe4";
+    internal const string WhitelistProbeSet6 = "wlprobe6";
+    internal const int MaxWhitelistProbes = 16;
+    internal const string WhitelistProbeTimeout = "10s";
+
+    /// <summary>
+    /// The whitelist check is about to probe <paramref name="addresses"/> (TCP 443) while the rules are
+    /// engaged: they join the uid-scoped probe sets for 10 s. Quietly nothing when the switch is not
+    /// engaged or there is no stored password (never a prompt); a failure is logged, never thrown.
+    /// </summary>
+    public async Task AllowWhitelistProbesAsync(IEnumerable<IPAddress> addresses)
+    {
+        if (!IsEngaged)
+        {
+            return;
+        }
+        var password = AppManager.Instance.LinuxSudoPwd;
+        if (password.IsNullOrEmpty() || BuildWhitelistProbeScript(addresses) is not { } script)
+        {
+            return;
+        }
+        try
+        {
+            var (code, error) = await RunAsRootAsync(script, password);
+            if (code != 0)
+            {
+                Logging.SaveLog($"ColituKillSwitch.AllowWhitelistProbes: exit {code}: {error.Trim()}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituKillSwitch.AllowWhitelistProbes", ex);
+        }
+    }
+
+    /// <summary>Public unicast addresses only (no loopback, private, LAN, link-local, CGNAT or multicast), at most 16, IPv4-mapped as IPv4.</summary>
+    internal static List<IPAddress> WhitelistProbeAddresses(IEnumerable<IPAddress> addresses) => addresses
+        .Select(address => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address)
+        .Where(address => address.AddressFamily == AddressFamily.InterNetwork
+            ? ColituLatency.IsPublic(address)
+            // IPv6: global unicast 2000::/3 only.
+            : address.AddressFamily == AddressFamily.InterNetworkV6 && (address.GetAddressBytes()[0] & 0xE0) == 0x20)
+        .Distinct()
+        .Take(MaxWhitelistProbes)
+        .ToList();
+
+    /// <summary>Root script adding the addresses to the probe sets with a 10 s timeout; null when none is left.</summary>
+    internal static string? BuildWhitelistProbeScript(IEnumerable<IPAddress> addresses)
+    {
+        var valid = WhitelistProbeAddresses(addresses);
+        if (valid.Count == 0)
+        {
+            return null;
+        }
+        var script = new StringBuilder();
+        script.Append("set -e").Append('\n');
+        script.Append("command -v nft >/dev/null 2>&1 || exit 3").Append('\n');
+        foreach (var (set, family) in new[] { (WhitelistProbeSet4, AddressFamily.InterNetwork), (WhitelistProbeSet6, AddressFamily.InterNetworkV6) })
+        {
+            var elements = valid.Where(address => address.AddressFamily == family).Select(address => $"{address} timeout {WhitelistProbeTimeout}").ToList();
+            if (elements.Count > 0)
+            {
+                script.Append($"nft add element inet {Table} {set} {{ {string.Join(", ", elements)} }}").Append('\n');
+            }
+        }
+        script.Append("exit 0").Append('\n');
+        return script.ToString();
+    }
+
+    internal const string TlsProbeSet4 = "tlsprobe4";
+    internal const string TlsProbeSet6 = "tlsprobe6";
+
+    /// <summary>
+    /// The TLS probe (TLS-PROBE-SPEC §1) is about to dial <paramref name="endpoints"/> while the rules are engaged:
+    /// each address and port pair joins the uid-scoped TLS probe sets for 10 s. Quietly nothing when the switch is
+    /// not engaged or there is no stored password (never a prompt); a failure is logged, never thrown.
+    /// </summary>
+    public async Task AllowTlsProbesAsync(IEnumerable<(IPAddress Address, int Port)> endpoints)
+    {
+        if (!IsEngaged)
+        {
+            return;
+        }
+        var password = AppManager.Instance.LinuxSudoPwd;
+        if (password.IsNullOrEmpty() || BuildTlsProbeScript(endpoints) is not { } script)
+        {
+            return;
+        }
+        try
+        {
+            var (code, error) = await RunAsRootAsync(script, password);
+            if (code != 0)
+            {
+                Logging.SaveLog($"ColituKillSwitch.AllowTlsProbes: exit {code}: {error.Trim()}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituKillSwitch.AllowTlsProbes", ex);
+        }
+    }
+
+    /// <summary>Root script adding the pairs (public addresses only, ports 1-65535, at most 16) to the TLS probe sets for 10 s; null when none is left.</summary>
+    internal static string? BuildTlsProbeScript(IEnumerable<(IPAddress Address, int Port)> endpoints)
+    {
+        var valid = endpoints
+            .Where(item => item.Port is >= 1 and <= 65535)
+            .Select(item => (Address: item.Address.IsIPv4MappedToIPv6 ? item.Address.MapToIPv4() : item.Address, item.Port))
+            .Where(item => WhitelistProbeAddresses([item.Address]).Count == 1)
+            .Distinct()
+            .Take(MaxWhitelistProbes)
+            .ToList();
+        if (valid.Count == 0)
+        {
+            return null;
+        }
+        var script = new StringBuilder();
+        script.Append("set -e").Append('\n');
+        script.Append("command -v nft >/dev/null 2>&1 || exit 3").Append('\n');
+        foreach (var (set, family) in new[] { (TlsProbeSet4, AddressFamily.InterNetwork), (TlsProbeSet6, AddressFamily.InterNetworkV6) })
+        {
+            var elements = valid.Where(item => item.Address.AddressFamily == family).Select(item => $"{item.Address} . {item.Port} timeout {WhitelistProbeTimeout}").ToList();
+            if (elements.Count > 0)
+            {
+                script.Append($"nft add element inet {Table} {set} {{ {string.Join(", ", elements)} }}").Append('\n');
+            }
+        }
+        script.Append("exit 0").Append('\n');
+        return script.ToString();
     }
 
     /// <summary>Distinct, IPv4-mapped addresses as IPv4, IPv6 link-local left out (fe80::/10 is allowed already).</summary>

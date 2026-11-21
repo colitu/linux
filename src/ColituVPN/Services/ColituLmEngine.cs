@@ -533,37 +533,93 @@ public static class ColituWhitelist
     }
 
     /// <summary>
+    /// With a <c>beforeProbe</c> hook (the Linux kill switch is engaged): the names may need the DoH head
+    /// start plus the adapter's resolvers (1.5 s + 3 s), and the whole check stays within 6 s.
+    /// </summary>
+    public static readonly TimeSpan GuardedResolveBudget = TimeSpan.FromMilliseconds(4500);
+    public static readonly TimeSpan GuardedBudget = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan HookBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// One check: every target of the foreign set (its own port) and every domestic host (TCP 443) in
-    /// parallel, within <see cref="Budget"/>. Null when
+    /// parallel, within <see cref="Budget"/>. First every name is resolved, then
+    /// <paramref name="beforeProbe"/> (if any) gets the resolved addresses once (the Linux kill switch
+    /// lets the probes out to exactly them), then the probes run. Null when
     /// <paramref name="requirePin"/> is set (the VPN is up) and the sockets cannot be pinned to the
     /// physical interface: the check would measure the tunnel.
     /// </summary>
-    public static async Task<ColituWhitelistCheck?> CheckAsync(IReadOnlyList<ColituWhitelistTarget> foreign, IReadOnlyList<string> domestic, string? device, bool requirePin, CancellationToken token = default)
+    public static Task<ColituWhitelistCheck?> CheckAsync(IReadOnlyList<ColituWhitelistTarget> foreign, IReadOnlyList<string> domestic, string? device, bool requirePin,
+        CancellationToken token = default, Func<IReadOnlyList<IPAddress>, Task>? beforeProbe = null) =>
+        CheckAsync(foreign, domestic, device, requirePin, ColituNetwork.ResolveServerAsync,
+            (address, port, timeoutMs) => ColituLatency.ProbeAsync(address, port, device, requirePin, timeoutMs), beforeProbe, token);
+
+    internal static async Task<ColituWhitelistCheck?> CheckAsync(IReadOnlyList<ColituWhitelistTarget> foreign, IReadOnlyList<string> domestic, string? device, bool requirePin,
+        Func<string, CancellationToken, Task<IPAddress?>> resolve, Func<IPAddress, int, int, Task<(int? Ms, bool Unpinned)>> probe,
+        Func<IReadOnlyList<IPAddress>, Task>? beforeProbe, CancellationToken token)
     {
         if (requirePin && string.IsNullOrEmpty(device))
         {
             return null;
         }
+        var budget = beforeProbe == null ? Budget : GuardedBudget;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(Budget);
+        deadline.CancelAfter(budget);
+        using var resolveDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        resolveDeadline.CancelAfter(beforeProbe == null ? Budget : GuardedResolveBudget);
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var unpinned = 0;
 
-        async Task<bool> Reachable(string host, int port)
+        // 1. Resolve every name (public IPv4 only, as the probes dial).
+        async Task<IPAddress?> Resolve(string host)
         {
             try
             {
-                var address = await ColituNetwork.ResolveServerAsync(host, deadline.Token);
-                if (address == null || address.AddressFamily != AddressFamily.InterNetwork || !ColituLatency.IsPublic(address))
-                {
-                    return false;
-                }
-                var left = (int)(Budget - watch.Elapsed).TotalMilliseconds;
-                if (left <= 50)
-                {
-                    return false;
-                }
-                var (ms, notPinned) = await ColituLatency.ProbeAsync(address, port, device, requirePin, left);
+                var address = await resolve(host, resolveDeadline.Token);
+                return address != null && address.AddressFamily == AddressFamily.InterNetwork && ColituLatency.IsPublic(address) ? address : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        var foreignTargets = foreign.Take(10).ToList();
+        var domesticHosts = domestic.Take(10).ToList();
+        var foreignNames = foreignTargets.Select(target => Resolve(target.Host)).ToList();
+        var domesticNames = domesticHosts.Select(Resolve).ToList();
+        await Task.WhenAll(foreignNames.Concat(domesticNames));
+        var foreignAddresses = foreignNames.Select(task => task.Result).ToList();
+        var domesticAddresses = domesticNames.Select(task => task.Result).ToList();
+
+        // 2. The hook, once, before any probe; it never fails the check.
+        var resolved = foreignAddresses.Concat(domesticAddresses).OfType<IPAddress>().Distinct().ToList();
+        if (beforeProbe != null && resolved.Count > 0)
+        {
+            try
+            {
+                await beforeProbe(resolved).WaitAsync(HookBudget, deadline.Token);
+            }
+            catch
+            {
+                // The probes run anyway; blocked ones simply fail.
+            }
+        }
+
+        // 3. The probes, in what is left of the budget.
+        var unpinned = 0;
+        async Task<bool> Reachable(IPAddress? address, int port)
+        {
+            if (address == null)
+            {
+                return false;
+            }
+            var left = (int)(budget - watch.Elapsed).TotalMilliseconds;
+            if (left <= 50)
+            {
+                return false;
+            }
+            try
+            {
+                var (ms, notPinned) = await probe(address, port, left);
                 if (notPinned)
                 {
                     Interlocked.Increment(ref unpinned);
@@ -576,8 +632,8 @@ public static class ColituWhitelist
             }
         }
 
-        var foreignTasks = foreign.Take(10).Select(target => Reachable(target.Host, target.Port)).ToList();
-        var domesticTasks = domestic.Take(10).Select(host => Reachable(host, Port)).ToList();
+        var foreignTasks = foreignTargets.Select((target, index) => Reachable(foreignAddresses[index], target.Port)).ToList();
+        var domesticTasks = domesticAddresses.Select(address => Reachable(address, Port)).ToList();
         var foreignResults = await Task.WhenAll(foreignTasks);
         var domesticResults = await Task.WhenAll(domesticTasks);
         if (unpinned > 0)
@@ -586,5 +642,181 @@ public static class ColituWhitelist
         }
         return new ColituWhitelistCheck(foreignResults.Count(ok => ok), foreignResults.Length, domesticResults.Count(ok => ok), domesticResults.Length,
             (int)Math.Min(watch.ElapsedMilliseconds, ColituAcSpec.MaxMs));
+    }
+}
+
+/// <summary>Why a server failed in a connect attempt; only <see cref="Server"/> blames the network or the server.</summary>
+public enum ColituWhitelistFailure
+{
+    Server,
+    Auth,
+    Quota,
+    Crash,
+    NetworkChange,
+    NoNetwork,
+    Cancel
+}
+
+/// <summary>
+/// The whitelist trigger (owner 2026-11-17, WHITELIST-TRIGGER-SPEC): the distinct servers that failed in
+/// connect attempts on the current network, with their entry country. Three servers in two countries make
+/// a whitelist check due (T1); a ping round where no foreign server answered does too (T2). At most one
+/// such check per network a minute; after a "not whitelist" result one more server must fail. Pure, no I/O.
+/// </summary>
+public sealed class ColituWhitelistLedger
+{
+    public const int MinServers = 3;
+    public const int MinCountries = 2;
+    public const int MinPingServers = 4;
+    public static readonly TimeSpan Debounce = TimeSpan.FromSeconds(60);
+
+    private readonly object _gate = new();
+    private readonly Dictionary<string, string> _servers = new(StringComparer.OrdinalIgnoreCase);
+    private string? _network;
+    private int _countAtLastCheck;
+    private DateTimeOffset? _lastCheck;
+
+    /// <summary>Distinct failed servers on the current network.</summary>
+    public int Count
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _servers.Count;
+            }
+        }
+    }
+
+    /// <summary>A server failed in a connect on <paramref name="network"/>; true when it was added (a new server, a failure that counts).</summary>
+    public bool Note(string network, string? serverId, string? country, ColituWhitelistFailure kind)
+    {
+        lock (_gate)
+        {
+            Track(network);
+            if (kind != ColituWhitelistFailure.Server || string.IsNullOrWhiteSpace(serverId) || _servers.ContainsKey(serverId))
+            {
+                return false;
+            }
+            _servers[serverId] = (country ?? "").Trim().ToUpperInvariant();
+            return true;
+        }
+    }
+
+    /// <summary>T1: at least three distinct servers in at least two countries, and a new one since the last "not whitelist" check.</summary>
+    public bool ServersDue(string network)
+    {
+        lock (_gate)
+        {
+            Track(network);
+            return _servers.Count >= MinServers && _servers.Count > _countAtLastCheck
+                && _servers.Values.Where(country => country.Length > 0).Distinct().Count() >= MinCountries;
+        }
+    }
+
+    /// <summary>The 60 s debounce of T1/T2 per network: true (and the slot taken) when a check may run now.</summary>
+    public bool TryTakeCheck(string network, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            Track(network);
+            if (_lastCheck is { } last && now - last < Debounce && now >= last)
+            {
+                return false;
+            }
+            _lastCheck = now;
+            return true;
+        }
+    }
+
+    /// <summary>A check ended: whitelist mode clears the ledger, "not whitelist" needs one more server for T1.</summary>
+    public void CheckDone(string network, bool whitelist)
+    {
+        lock (_gate)
+        {
+            Track(network);
+            if (whitelist)
+            {
+                Clear();
+            }
+            else
+            {
+                _countAtLastCheck = _servers.Count;
+            }
+        }
+    }
+
+    /// <summary>A connect succeeded (traffic verified).</summary>
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            Clear();
+        }
+    }
+
+    private void Track(string network)
+    {
+        if (!string.Equals(_network, network, StringComparison.Ordinal))
+        {
+            _network = network;
+            Clear();
+            _lastCheck = null;
+        }
+    }
+
+    private void Clear()
+    {
+        _servers.Clear();
+        _countAtLastCheck = 0;
+    }
+
+    /// <summary>
+    /// The kind of a server failure in a connect: the same exclusions as the connect-failure counter
+    /// (account, plan or quota, a paused device, no internet, cancel), plus refused credentials, a core
+    /// that did not start and a network that changed during the attempt. Only "no transport carried
+    /// traffic" (<see cref="ColituConnectException"/>, not offline) blames the server or the network.
+    /// </summary>
+    public static ColituWhitelistFailure Classify(Exception ex, bool credentialsRefused, bool networkChanged, bool hasNetwork)
+    {
+        if (ex is OperationCanceledException)
+        {
+            return ColituWhitelistFailure.Cancel;
+        }
+        if (ex is ColituPlanRequiredException || ColituUpsell.IsQuotaError(ex)
+            || ex is ColituApiException { ErrorCode: "ENTITLEMENT_INACTIVE" or "ENTITLEMENT_EXPIRED" })
+        {
+            return ColituWhitelistFailure.Quota;
+        }
+        if (credentialsRefused || ex is ColituDevicePausedException or ColituApiException)
+        {
+            return ColituWhitelistFailure.Auth;
+        }
+        if (networkChanged)
+        {
+            return ColituWhitelistFailure.NetworkChange;
+        }
+        if (!hasNetwork || ex is ColituConnectException { Offline: true })
+        {
+            return ColituWhitelistFailure.NoNetwork;
+        }
+        return ex is ColituConnectException ? ColituWhitelistFailure.Server : ColituWhitelistFailure.Crash;
+    }
+
+    /// <summary>
+    /// T2: a ping round with the VPN off where at least four servers outside Russia (entry country; no
+    /// multihop routes) were pinged, none answered, and they span at least two countries.
+    /// </summary>
+    public static bool PingsDue(IEnumerable<ColituVpnServer> servers, IReadOnlyDictionary<string, int?> dialled)
+    {
+        var pinged = servers
+            .Where(server => !server.IsMultihop && server.Id is { Length: > 0 } && dialled.ContainsKey(server.Id))
+            .Select(server => (server.Id!, Country: ColituLmPlanner.Countries(server).Entry))
+            .Where(item => item.Country != "RU")
+            .DistinctBy(item => item.Item1, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return pinged.Count >= MinPingServers
+            && pinged.All(item => dialled[item.Item1] == null)
+            && pinged.Select(item => item.Country).Where(country => country.Length > 0).Distinct().Count() >= MinCountries;
     }
 }

@@ -50,6 +50,7 @@ public partial class ColituMainWindow
             box.IsCheckedChanged += async (sender, _) => await PreferenceChangedAsync(sender);
         }
         SettingsStats.IsCheckedChanged += (_, _) => StatsChanged();
+        ProtocolChip.PointerReleased += ProtocolChip_Click;
         HookUiMode();
     }
 
@@ -114,7 +115,9 @@ public partial class ColituMainWindow
             : _planRequired ? loc["home.title.noplan"]
             : _upsell.BlocksConnect ? loc["upsell.out.title"]
             : loc["home.title.off"];
-        HomeSubtitle.Text = on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
+        var overGecko = on && _vpn.ConnectedOverGecko;
+        HomeSubtitle.Text = overGecko ? loc.Format("home.sub.on", ("server", $"ColituGecko · {loc["gecko.autoExit"]}"))
+            : on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
             : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked"
                 : _vpn.KillSwitchHeldAfterFailure ? "home.sub.blockedFailed"
                 : "home.sub.blocked"]
@@ -129,9 +132,24 @@ public partial class ColituMainWindow
             : _upsell.BlocksConnect ? loc["upsell.cta"]
             : loc["home.tap"];
         ToolTip.SetTip(ConnectButton, on ? loc["home.disconnect"] : busy ? loc["home.cancel"] : loc["home.connect"]);
-        var protocol = on ? _vpn.ConnectedProtocol : null;
-        ProtocolChip.IsVisible = protocol is { Length: > 0 } && _vpn.AdvancedMode;
-        ProtocolChipText.Text = protocol is { Length: > 0 } ? $"{loc["home.protocol"]} · {ColituTransportNames.Of(protocol, loc)}".ToUpper(loc.Culture) : "";
+        // Connected: the method in use. Otherwise the pick for the next connect (automatic when none).
+        var offer = _vpn.GeckoOffer;
+        var protocol = on && _vpn.ConnectedProtocol is { Length: > 0 } active ? active : ColituTransportChoice.Shown(_vpn.PreferredTransport, offer);
+        // The protocol menu exists while the panel offers ColituGecko (Advanced mode).
+        var hasMenu = offer is ColituGeckoOffer.Offered or ColituGeckoOffer.Unavailable;
+        ProtocolChip.IsVisible = _vpn.AdvancedMode && (hasMenu || on && _vpn.ConnectedProtocol is { Length: > 0 });
+        ProtocolChip.Cursor = hasMenu ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        ToolTip.SetTip(ProtocolChip, hasMenu ? loc["home.protocol.hint"] : null);
+        // ColituGecko (connected over it, or picked for the next connect): the word shows as the animated
+        // brand gradient instead of a plain method name.
+        var geckoChip = protocol == ColituTransportChoice.Gecko;
+        var method = protocol.Length > 0 ? ColituTransportNames.Of(protocol, loc) : loc["transport.auto"];
+        ProtocolChipText.Text = geckoChip
+            ? $"{loc["home.protocol"]} · ".ToUpper(loc.Culture)
+            : $"{loc["home.protocol"]} · {method}{(hasMenu ? " ▾" : "")}".ToUpper(loc.Culture);
+        ProtocolChipGecko.IsVisible = geckoChip;
+        ProtocolChipGecko.ShowDot = overGecko;
+        ProtocolChipTail.IsVisible = geckoChip && hasMenu;
         // Proxy mode leaves DNS, UDP/WebRTC, IPv6 and proxy-unaware apps outside the tunnel: say so while it runs.
         ProxyCoverageWarning.IsVisible = on && !_vpn.Preferences.IsTunMode && _vpn.AdvancedMode;
 
@@ -268,6 +286,20 @@ public partial class ColituMainWindow
     // ── Location card ──────────────────────────────────────────────────────
     private void ApplyLocationCard()
     {
+        if (_vpn.ConnectedOverGecko)
+        {
+            // ColituGecko picks its exit itself: no server city, the protocol and "automatic exit".
+            var gecko = ColituServerRow.Auto();
+            gecko.Title = "ColituGecko";
+            gecko.Subtitle = Loc.I["gecko.autoExit"];
+            HomeFlag.Content = gecko;
+            HomeServerTitle.Text = gecko.Title;
+            HomeServerSubtitle.Text = gecko.Subtitle;
+            HomeServerCheck.Background = Resource<IBrush>("SuccessBrush");
+            HomeServerCheck.BorderBrush = Resource<IBrush>("SuccessBrush");
+            HomeServerCheckMark.IsVisible = true;
+            return;
+        }
         // "Best server" shows the server it connects to first (the same rank[0] the connect uses).
         var server = _vpn.Status is ColituVpnStatus.Connected && _vpn.ConnectedServer != null
             ? _vpn.ConnectedServer
@@ -558,5 +590,74 @@ public partial class ColituMainWindow
         {
             ShowToast(Loc.I["settings.saved"]);
         }
+    }
+
+    // ── Protocol menu (automatic / ColituGecko) ────────────────────────────
+    private void ProtocolChip_Click(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        var offer = _vpn.GeckoOffer;
+        if (_vpn.Status is ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting
+            || offer is not (ColituGeckoOffer.Offered or ColituGeckoOffer.Unavailable))
+        {
+            return;
+        }
+        var loc = Loc.I;
+        var current = ColituTransportChoice.Shown(_vpn.PreferredTransport, offer);
+        var menu = new ContextMenu();
+        foreach (var entry in ColituTransportChoice.Menu(offer))
+        {
+            var method = entry.Method;
+            var item = new MenuItem
+            {
+                Header = method == ColituTransportChoice.Gecko ? GeckoMenuHeader(entry.Enabled, loc)
+                    : method.Length == 0 ? loc["transport.auto"] : ColituTransportNames.Of(method, loc),
+                ToggleType = entry.Enabled ? MenuItemToggleType.CheckBox : MenuItemToggleType.None,
+                IsChecked = entry.Enabled && method == current,
+                IsEnabled = entry.Enabled
+            };
+            if (method == ColituTransportChoice.Gecko)
+            {
+                Avalonia.Automation.AutomationProperties.SetName(item, entry.Enabled ? "ColituGecko" : $"ColituGecko, {loc["gecko.unavailable"]}");
+            }
+            item.Click += async (_, _) => await PickTransportAsync(method);
+            menu.Items.Add(item);
+        }
+        menu.Open(ProtocolChip);
+        e.Handled = true;
+    }
+
+    /// <summary>The ColituGecko menu entry: the animated label; offered but unavailable now: greyed out with the reason.</summary>
+    private static Control GeckoMenuHeader(bool enabled, Loc loc)
+    {
+        var header = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
+        header.Children.Add(new ColituGeckoLabel { Palette = ColituGeckoPalette.Auto, ShowDot = enabled });
+        if (!enabled)
+        {
+            header.Children.Add(new TextBlock { Text = $" · {loc["gecko.unavailable"]}", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center });
+        }
+        return header;
+    }
+
+    private async Task PickTransportAsync(string method)
+    {
+        if (method == _vpn.PreferredTransport)
+        {
+            return;
+        }
+        _vpn.SetPreferredTransport(method);
+        ApplyStatus();
+        if (_vpn.Status != ColituVpnStatus.Connected)
+        {
+            return;
+        }
+        try
+        {
+            await _vpn.ReconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message, true);
+        }
+        ApplyStatus();
     }
 }

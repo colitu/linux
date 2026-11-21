@@ -25,4 +25,19 @@
     <ProjectReference Include="..\ColituVPN\ColituVPN.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="ServiceLib" />
+    <Using Include="ServiceLib.Models.Configs" />
+    <Using Include="ServiceLib.Models.CoreConfigs" />
+    <Using Include="ServiceLib.Models.Entities" />
+    <Using Include="ServiceLib.Manager" />
+    <Using Include="ServiceLib.Enums" />
+    <Using Include="ServiceLib.Services.CoreConfig" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core config contexts for generator tests. -->
+    <Compile Include="..\ServiceLib.Tests\CoreConfig\CoreConfigTestFactory.cs" Link="Shared\CoreConfigTestFactory.cs" />
+  </ItemGroup>
+
 </Project>

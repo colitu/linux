@@ -9,7 +9,9 @@ using System.Text.Json;
 namespace v2rayN.Desktop.Services;
 
 /// <summary>The accepted content of a signed endpoint list.</summary>
-public sealed record ColituEndpointData(long Version, IReadOnlyList<string> Api, IReadOnlyList<string> Web, IReadOnlyList<string> Lists);
+/// <param name="Relays">The list's <c>relays</c>; null when the key is absent (then the built-in relays apply).</param>
+public sealed record ColituEndpointData(long Version, IReadOnlyList<string> Api, IReadOnlyList<string> Web, IReadOnlyList<string> Lists,
+    IReadOnlyList<ColituApiRelay>? Relays = null);
 
 /// <summary>
 /// API failover through a signed endpoint list (spec: panel repo deploy/endpoints/APP_SPEC.md).
@@ -32,6 +34,12 @@ public sealed class ColituEndpointList
         typeof(ColituEndpointList).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
             .OfType<System.Reflection.AssemblyMetadataAttribute>()
             .FirstOrDefault(attribute => attribute.Key == "ColituMirrors")?.Value);
+
+    /// <summary>Built-in API relays, the "ColituRelays" assembly metadata (<c>id|host:port|sni|region|wl;...</c>); not in the public source.</summary>
+    public static readonly IReadOnlyList<ColituApiRelay> BuiltInRelays = ColituApiRelays.ParseBuildValue(
+        typeof(ColituEndpointList).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(attribute => attribute.Key == "ColituRelays")?.Value);
 
     /// <summary>API bases, in order, used when no list was accepted yet.</summary>
     public static readonly IReadOnlyList<string> BuiltInApi = BuildApi(BuiltInMirrors);
@@ -71,6 +79,9 @@ public sealed class ColituEndpointList
     private readonly string? _statePath;
     private readonly IReadOnlyList<string> _builtInApi;
     private readonly IReadOnlyList<string> _builtInLists;
+    private readonly IReadOnlyList<ColituApiRelay> _builtInRelays;
+    private readonly ColituApiPathHealer _healer = new();
+    private int _healStarted;
     private ColituEndpointData? _data;
     private string? _raw;
     private string? _lastWorked;
@@ -79,9 +90,11 @@ public sealed class ColituEndpointList
 
     /// <param name="statePath">File that keeps the accepted list and the working base; null keeps nothing on disk.</param>
     /// <param name="mirrors">Mirror origins; null takes the ones embedded by the build.</param>
-    internal ColituEndpointList(string? statePath, IEnumerable<string>? mirrors = null)
+    /// <param name="relays">Built-in relays; null takes the ones of the build.</param>
+    internal ColituEndpointList(string? statePath, IEnumerable<string>? mirrors = null, IEnumerable<ColituApiRelay>? relays = null)
     {
         _statePath = statePath;
+        _builtInRelays = relays?.ToList() ?? BuiltInRelays;
         var origins = mirrors == null ? BuiltInMirrors : ParseMirrors(string.Join(",", mirrors));
         _builtInApi = mirrors == null ? BuiltInApi : BuildApi(origins);
         _builtInLists = mirrors == null ? BuiltInLists : BuildLists(origins);
@@ -164,7 +177,11 @@ public sealed class ColituEndpointList
                 reason = "not newer than the stored list";
                 return null;
             }
-            return new ColituEndpointData(version, api, web, lists);
+            // Optional; unknown keys are ignored, a bad relay entry is skipped (not the whole list).
+            IReadOnlyList<ColituApiRelay>? relays = body.TryGetProperty("relays", out var relayArray)
+                ? ColituApiRelays.ParseArray(relayArray)
+                : null;
+            return new ColituEndpointData(version, api, web, lists, relays);
         }
         catch (Exception ex) when (ex is JsonException or FormatException or CryptographicException or ArgumentException or InvalidOperationException)
         {
@@ -240,13 +257,79 @@ public sealed class ColituEndpointList
 
     private static string Normalize(string? value) => (value ?? "").Trim().TrimEnd('/');
 
-    /// <summary>The API bases for the next request: the accepted list's, else the built-in ones.</summary>
-    public IReadOnlyList<string> Bases()
+    /// <summary>Set by the VPN service: the client's country and whitelist mode, for the base order.</summary>
+    public static Func<ColituRouteContext> RouteContextProvider { get; set; } = () => ColituRouteContext.None;
+
+    private static ColituRouteContext CurrentContext()
+    {
+        try
+        {
+            return RouteContextProvider() ?? ColituRouteContext.None;
+        }
+        catch
+        {
+            return ColituRouteContext.None;
+        }
+    }
+
+    /// <summary>The relays of the accepted list when it has the key, else the built-in ones.</summary>
+    public IReadOnlyList<ColituApiRelay> Relays()
     {
         lock (_gate)
         {
-            return Order(_data?.Api ?? _builtInApi, _lastWorked);
+            return _data?.Relays ?? _builtInRelays;
         }
+    }
+
+    /// <summary>The relay of a <c>relay:&lt;id&gt;</c> base, or null.</summary>
+    public ColituApiRelay? Relay(string baseUrl) =>
+        ColituApiRelays.IsRelay(baseUrl) ? Relays().FirstOrDefault(r => r.Id == baseUrl[ColituApiRelays.BasePrefix.Length..]) : null;
+
+    /// <summary>The order without the last working base: api bases, mirrors and relays as <paramref name="ctx"/> wants them.</summary>
+    public IReadOnlyList<string> NaturalOrder(ColituRouteContext? ctx = null)
+    {
+        lock (_gate)
+        {
+            return ColituApiRelays.RouteOrder(_data?.Api ?? _builtInApi, _data?.Relays ?? _builtInRelays, ctx ?? CurrentContext());
+        }
+    }
+
+    /// <summary>The bases for the next request (API bases and relays), the one that last worked first.</summary>
+    public IReadOnlyList<string> Bases(ColituRouteContext? ctx = null)
+    {
+        var natural = NaturalOrder(ctx);
+        lock (_gate)
+        {
+            return Order(natural, _lastWorked);
+        }
+    }
+
+    /// <summary>The base to build request URLs with: the first real URL of <see cref="Bases"/> (never a relay).</summary>
+    public string UrlBase() => Bases().FirstOrDefault(b => !ColituApiRelays.IsRelay(b)) ?? ColituAuthService.DefaultApiBaseUrl;
+
+    /// <summary>The base that last worked, or null.</summary>
+    public string? LastWorking()
+    {
+        lock (_gate)
+        {
+            return _lastWorked;
+        }
+    }
+
+    /// <summary>primary | mirror | relay:&lt;id&gt; for reports (never an address).</summary>
+    public string ApiPath()
+    {
+        var current = LastWorking();
+        if (current == null)
+        {
+            return "primary";
+        }
+        if (ColituApiRelays.IsRelay(current))
+        {
+            return current;
+        }
+        var first = NaturalOrder(ColituRouteContext.None).FirstOrDefault(b => !ColituApiRelays.IsRelay(b));
+        return string.Equals(current, first, StringComparison.OrdinalIgnoreCase) ? "primary" : "mirror";
     }
 
     /// <summary>Every API base the app may talk to (built-in and accepted list), in no particular order.</summary>
@@ -272,7 +355,8 @@ public sealed class ColituEndpointList
     {
         lock (_gate)
         {
-            return _builtInApi.Concat(_builtInLists).Concat(_data?.Api ?? []).Concat(_data?.Lists ?? []).ToList();
+            var relays = _builtInRelays.Concat(_data?.Relays ?? []).Select(r => $"https://{r.Host}:{r.Port}/");
+            return _builtInApi.Concat(_builtInLists).Concat(_data?.Api ?? []).Concat(_data?.Lists ?? []).Concat(relays).ToList();
         }
     }
 
@@ -399,11 +483,15 @@ public sealed class ColituEndpointList
         });
     }
 
-    /// <summary>Fetches each list URL in order (10 s each) and stops at the first file that is accepted.</summary>
+    /// <summary>
+    /// Fetches each list URL in order (10 s each), then the list through each relay
+    /// (<c>relay:&lt;id&gt;/downloads/endpoints.json</c>), and stops at the first file that is accepted.
+    /// </summary>
     public async Task<bool> RefreshAsync(CancellationToken token, Func<string, CancellationToken, Task<string?>>? fetch = null)
     {
         fetch ??= FetchAsync;
-        foreach (var url in ListUrls())
+        var urls = ListUrls().Concat(Relays().Select(r => r.Base + ListPath)).ToList();
+        foreach (var url in urls)
         {
             token.ThrowIfCancellationRequested();
             try
@@ -428,8 +516,23 @@ public sealed class ColituEndpointList
         return false;
     }
 
+    private const string ListPath = "/downloads/endpoints.json";
+    private const string HealthPath = "/health";
+
     private async Task<string?> FetchAsync(string url, CancellationToken token)
     {
+        if (ColituApiRelays.IsRelay(url))
+        {
+            var slash = url.IndexOf('/');
+            if (slash < 0 || Relay(url[..slash]) is not { } relay)
+            {
+                return null;
+            }
+            using var viaRelay = await ColituApiRelays.ClientFor(relay).GetAsync(ColituApiRelays.RelayUri(url[slash..]), token);
+            return viaRelay.IsSuccessStatusCode && viaRelay.Content.Headers.ContentLength is null or <= MaxListBytes
+                ? await viaRelay.Content.ReadAsStringAsync(token)
+                : null;
+        }
         var http = _http ??= new HttpClient(ColituCertPins.Pin(new SocketsHttpHandler
         {
             UseProxy = false,
@@ -443,6 +546,141 @@ public sealed class ColituEndpointList
         };
         using var response = await http.GetAsync(url, token);
         return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(token) : null;
+    }
+
+    // ---- self-heal -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Probes the bases in order with GET /health and makes the first one that answers the working
+    /// base. <paramref name="all"/> = false: only the bases before the current one (back to an earlier
+    /// path); true (network change): from the start, current included. Returns the new base or null.
+    /// </summary>
+    public async Task<string?> HealAsync(ColituRouteContext ctx, bool all, Func<string, CancellationToken, Task<bool>> probe, CancellationToken token)
+    {
+        var current = LastWorking();
+        foreach (var candidate in NaturalOrder(ctx))
+        {
+            token.ThrowIfCancellationRequested();
+            if (!all && string.Equals(candidate, current, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            bool ok;
+            try
+            {
+                ok = await probe(candidate, token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                ok = false;
+            }
+            if (ok)
+            {
+                RememberWorking(candidate);
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>True when a periodic heal run is due (off the first base for <see cref="ColituApiRelays.HealInterval"/>).</summary>
+    internal bool HealDue(DateTimeOffset now, ColituRouteContext ctx)
+    {
+        var current = LastWorking();
+        var first = NaturalOrder(ctx).FirstOrDefault();
+        return _healer.Claim(now, current != null && !string.Equals(current, first, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>GET /health of a base (origin of a URL base, or through a relay), 2 s; true on a 2xx.</summary>
+    private async Task<bool> ProbeAsync(string baseUrl, CancellationToken token)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(ColituApiRelays.ProbeTimeout);
+        if (Relay(baseUrl) is { } relay)
+        {
+            using var viaRelay = await ColituApiRelays.ClientFor(relay).GetAsync(ColituApiRelays.RelayUri(HealthPath), timeout.Token);
+            return viaRelay.IsSuccessStatusCode;
+        }
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+        var http = _http ??= new HttpClient(ColituCertPins.Pin(new SocketsHttpHandler
+        {
+            UseProxy = false,
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(8),
+            ConnectCallback = ColituPinnedHosts.ConnectAsync
+        }))
+        {
+            Timeout = FetchTimeout,
+            MaxResponseContentBufferSize = MaxListBytes
+        };
+        using var response = await http.GetAsync(new Uri(uri.GetLeftPart(UriPartial.Authority) + HealthPath), timeout.Token);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <summary>
+    /// Starts the self-heal: every minute it checks whether the client has worked off its first base
+    /// for 10 minutes and then tries the earlier bases again; a network change chooses the path from the
+    /// start and refreshes the list through it. Once per process.
+    /// </summary>
+    public void StartSelfHeal()
+    {
+        if (Interlocked.Exchange(ref _healStarted, 1) != 0)
+        {
+            return;
+        }
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += (_, _) => _ = OnNetworkChangedAsync();
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromMinutes(1));
+                try
+                {
+                    var ctx = CurrentContext();
+                    if (HealDue(DateTimeOffset.UtcNow, ctx) && await HealAsync(ctx, all: false, ProbeAsync, CancellationToken.None) is { } back)
+                    {
+                        Log($"API path back to an earlier base ({(ColituApiRelays.IsRelay(back) ? back : HostOf(back))})");
+                    }
+                }
+                catch
+                {
+                    // Silent: the current path stays.
+                }
+            }
+        });
+    }
+
+    private int _networkHealRunning;
+
+    private async Task OnNetworkChangedAsync()
+    {
+        if (Interlocked.Exchange(ref _networkHealRunning, 1) != 0)
+        {
+            return;
+        }
+        try
+        {
+            // Let the new network settle (addresses, routes) before probing it.
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            _healer.Reset();
+            await HealAsync(CurrentContext(), all: true, ProbeAsync, CancellationToken.None);
+            await RefreshAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // Silent.
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _networkHealRunning, 0);
+        }
     }
 
     // ---- failover --------------------------------------------------------------------------

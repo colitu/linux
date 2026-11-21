@@ -1,0 +1,10 @@
+{
+  "_doc": "ColituGecko (Colitu's own protocol): gecko-client (cmd/gecko-client of Colitu's PRIVATE repository colituvpn/colitu-gecko, not open source). scripts/build-gecko-sidecar.sh builds it from the pinned commit (CGO off) into gecko-dosyalari/linux-<arch>/gecko-client, which is never committed; scripts/package-linux.sh checks the SHA-256 below and ships it in bin/colitu-gecko/. While 'commit' is empty (the Gecko code is not in a pushed commit yet) the packages ship without it and the app reports 'gecko-client missing' (Gecko stays off).",
+  "repo": "https://github.com/colituvpn/colitu-gecko",
+  "commit": "e9b1e717939a3a7d1d67d394da8884869e7967bf",
+  "build": "go build -trimpath -buildvcs=false -ldflags '-s -w -buildid=' ./cmd/gecko-client",
+  "sha256": {
+    "linux-x64": "9176f9f275915f62ffdbc3730fb1f639e289c9d1630ae55562a0f5718c44a2fd",
+    "linux-arm64": "d0adb5734129bb2af10b69fc7cd14dd459dec5afcf9486fec6747648c8183f75"
+  }
+}

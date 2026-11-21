@@ -15,7 +15,7 @@ using ServiceLib.Services;
 
 namespace v2rayN.Desktop.Services;
 
-public sealed class ColituVpnService
+public sealed partial class ColituVpnService
 {
     public static ColituVpnService Instance { get; } = new();
 
@@ -73,6 +73,8 @@ public sealed class ColituVpnService
     private System.Threading.Timer? _whitelistTimer;
     /// <summary>Connects that failed in a row (offline ones too): two start a whitelist check.</summary>
     private int _connectFailuresInRow;
+    /// <summary>Servers that failed in connects on this network: three in two countries start a whitelist check (T1).</summary>
+    private readonly ColituWhitelistLedger _whitelistLedger = new();
     /// <summary>Network key of the current connect / tunnel: stall marks and penalties are filed under it.</summary>
     private string _networkKey = ColituAdaptiveConnect.NetworkKey("other", null);
     private string? _linkKind;
@@ -116,7 +118,19 @@ public sealed class ColituVpnService
     /// outage ended, the marks put the worst transport first, for 6 h once it carried traffic).
     /// </summary>
     private bool _serverOutageThisRound;
-    /// <summary>This round's TCP connect times per transport (-1: no answer); empty when not measured.</summary>
+    /// <summary>
+    /// This round's TLS probes (TLS-PROBE-SPEC §2) were reset on two distinct ports: the network blocks the
+    /// server's address. Every transport of it is skipped, none gets a stall mark.
+    /// </summary>
+    private bool _ipBlockedThisRound;
+    /// <summary>
+    /// AC3 hinted start (no round probe): the ip_blocked TLS probes running next to the first transport attempt;
+    /// null once used, or on the probed path.
+    /// </summary>
+    private ColituTlsGate? _tlsGate;
+    /// <summary>A measurement run (panel targets, VPN off) is under way.</summary>
+    private int _measuring;
+    /// <summary>This round's TCP connect times per endpoint (<see cref="ColituTransportOrder.EndpointKey"/>; -1: no answer); empty when not measured.</summary>
     private Dictionary<string, int> _roundLatency = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A manual server where every transport failed: the error offers "Try the fastest server".</summary>
@@ -150,6 +164,8 @@ public sealed class ColituVpnService
 
     private ColituVpnService()
     {
+        // The API path order: RU relays earlier in Russia, the whitelist relay first in whitelist mode.
+        ColituEndpointList.RouteContextProvider = () => new ColituRouteContext(_session.ClientCountry, _whitelistMode);
         // Before LoadState writes the state file: a missing statistics file next to an existing
         // state file is an update, not a new install (first_connect_* stays untouched then).
         ColituInsights.Instance.Touch();
@@ -161,6 +177,7 @@ public sealed class ColituVpnService
         DeleteLegacyPingTargets();
         // The warm spare goes into the generated core config before the core starts.
         CoreConfigHandler.ClientConfigPostProcessor = PostProcessConfig;
+        InitGecko();
         StartWatchdog();
     }
 
@@ -224,6 +241,9 @@ public sealed class ColituVpnService
     /// <summary>"Best server": the panel chooses the recommended node.</summary>
     public bool IsAutoSelection => SelectedServer == null
         && (_session.SelectedServerId.IsNullOrEmpty() || string.Equals(_session.SelectionMode, ColituServerSelectionModes.Best, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The user picked the virtual "Beyaz Liste" row of <see cref="SavedServerId"/>: connect with vless-ws only.</summary>
+    public bool WhitelistSelected => !IsAutoSelection && _session.SelectedWhitelist;
 
     public string? SavedServerId => IsAutoSelection ? null : SelectedServer?.Id ?? _session.SelectedServerId;
 
@@ -528,56 +548,97 @@ public sealed class ColituVpnService
         }
     }
 
-    /// <summary>A connect failed: the second in a row starts a whitelist check (AC4, VPN off by then).</summary>
+    /// <summary>
+    /// A connect failed: three failed servers in two countries (T1, if the check did not run inside the
+    /// connect), else the second failed connect in a row, start a whitelist check (AC4, VPN off by then).
+    /// </summary>
     private void NoteConnectFailure()
     {
-        if (Interlocked.Increment(ref _connectFailuresInRow) >= 2 && AcEngine4Enabled)
+        var inRow = Interlocked.Increment(ref _connectFailuresInRow);
+        if (!AcEngine4Enabled)
+        {
+            return;
+        }
+        if (WhitelistServersDue())
+        {
+            _ = Task.Run(() => CheckWhitelistAsync("servers failed in a connect", afterFailures: true, trigger: "servers"));
+        }
+        else if (inRow >= 2)
         {
             _ = Task.Run(() => CheckWhitelistAsync("two connection failures in a row", afterFailures: true));
         }
     }
 
+    /// <summary>T1 holds on this network (AC4, not in whitelist mode yet) and the 60 s debounce lets a check run now (slot taken).</summary>
+    private bool WhitelistServersDue()
+    {
+        var network = CurrentNetworkKey();
+        return AcEngine4Enabled && !_whitelistMode && _whitelistLedger.ServersDue(network) && _whitelistLedger.TryTakeCheck(network, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>A server carried nothing in a connect: into the whitelist ledger when the failure blames the server or the network.</summary>
+    private void NoteWhitelistServerFailure(Exception ex, string? serverId, ColituVpnServer? server)
+    {
+        var network = CurrentNetworkKey();
+        var kind = ColituWhitelistLedger.Classify(ex, _credentialsRefused,
+            networkChanged: !string.Equals(network, _networkKey, StringComparison.Ordinal), hasNetwork: ColituNetwork.HasDefaultRoute());
+        var country = server != null ? ColituLmPlanner.Countries(server).Entry : "";
+        // A network that changed during the attempt starts its own (empty) ledger.
+        if (_whitelistLedger.Note(network, serverId, country, kind))
+        {
+            LogConnection($"Whitelist ledger: server {serverId} ({(country.Length > 0 ? country : "-")}) failed, {_whitelistLedger.Count} on this network");
+        }
+    }
+
     /// <summary>
     /// One whitelist check (≤ 4 s, TCP 443 to the foreign and domestic sets, outside the tunnel). On
-    /// entering whitelist mode: a notice, the ac-event, a re-check every 5 minutes and, after two failed
+    /// entering whitelist mode: a notice, the ac-event, a re-check every 5 minutes and, after failed
     /// connects in automatic mode, a connect to the best whitelist server. Without any flagged server
     /// only the notice and the log. It ends when the foreign set works again. Never throws.
+    /// <paramref name="trigger"/>: "servers" (T1) or "pings" (T2), already debounced by the ledger.
+    /// <paramref name="inConnect"/>: run by the automatic connect itself (T1); it switches to the whitelist
+    /// servers on its own, so no second connect starts here. Returns true when whitelist mode was entered
+    /// and at least one whitelist server is there.
     /// </summary>
-    private async Task CheckWhitelistAsync(string reason, bool afterFailures)
+    private async Task<bool> CheckWhitelistAsync(string reason, bool afterFailures, string? trigger = null, bool inConnect = false)
     {
-        if (!AcEngine4Enabled || Status == ColituVpnStatus.Connecting || Interlocked.Exchange(ref _whitelistChecking, 1) == 1)
+        if (!AcEngine4Enabled || (Status == ColituVpnStatus.Connecting && !inConnect) || Interlocked.Exchange(ref _whitelistChecking, 1) == 1)
         {
-            return;
+            return false;
         }
         try
         {
             var nowTicks = Environment.TickCount64;
             // Outside the 5-minute re-check, at most one check a minute (ping rounds can be frequent).
-            if (!afterFailures && reason != "re-check" && nowTicks - Interlocked.Read(ref _whitelistCheckedAt) < 60_000)
+            if (!afterFailures && trigger == null && reason != "re-check" && nowTicks - Interlocked.Read(ref _whitelistCheckedAt) < 60_000)
             {
-                return;
+                return false;
             }
             Interlocked.Exchange(ref _whitelistCheckedAt, nowTicks);
             var domestic = ColituWhitelist.DomesticSet(_session.WhitelistProbe, _session.ClientCountry);
             if (domestic.Count == 0)
             {
                 LogConnection($"Whitelist check skipped ({reason}): no domestic hosts for country {(_session.ClientCountry ?? "-")}");
-                return;
+                return false;
             }
             var foreign = ColituWhitelist.ForeignSet(_lastServers, server => DisplayPing(server.Id));
             var vpnUp = Status is ColituVpnStatus.Connected or ColituVpnStatus.Reconnecting;
-            var check = await ColituWhitelist.CheckAsync(foreign, domestic, ColituNetwork.ProbeInterfaceName(), requirePin: vpnUp);
+            // Kill switch engaged (between servers of a connect, or fail-closed after one): its drop policy
+            // would stop the probes; the resolved addresses get a 10 s, uid-scoped exception first.
+            Func<IReadOnlyList<IPAddress>, Task>? openProbes = _killSwitch.IsEngaged ? addresses => _killSwitch.AllowWhitelistProbesAsync(addresses) : null;
+            var check = await ColituWhitelist.CheckAsync(foreign, domestic, ColituNetwork.ProbeInterfaceName(), requirePin: vpnUp, beforeProbe: openProbes);
             if (check == null)
             {
                 LogConnection($"Whitelist check skipped ({reason}): the probes cannot be kept outside the tunnel");
-                return;
+                return false;
             }
             var was = _whitelistMode;
             var next = ColituWhitelist.NextState(was, check);
-            LogConnection($"Whitelist check ({reason}): foreign {check.ForeignOk}/{check.ForeignTotal}, domestic {check.DomesticOk}/{check.DomesticTotal}, {check.Ms} ms -> {(next ? "whitelist mode" : "normal")}");
+            LogConnection($"Whitelist check ({reason}{(trigger != null ? $", trigger {trigger}" : "")}): foreign {check.ForeignOk}/{check.ForeignTotal}, domestic {check.DomesticOk}/{check.DomesticTotal}, {check.Ms} ms -> {(next ? "whitelist mode" : "normal")}");
             ColituEngineJournal.Instance.Add(ColituEngineJournal.Whitelist, new
             {
                 reason,
+                trigger,
                 foreign_ok = check.ForeignOk,
                 foreign_total = check.ForeignTotal,
                 domestic_ok = check.DomesticOk,
@@ -587,9 +648,11 @@ public sealed class ColituVpnService
                 state = next ? "on" : "off",
                 flag = check.Flag(next)
             });
+            // Entering whitelist mode clears the ledger; "normal" needs one more failed server for T1.
+            _whitelistLedger.CheckDone(CurrentNetworkKey(), next);
             if (next == was)
             {
-                return;
+                return false;
             }
             _whitelistMode = next;
             ColituInsights.Instance.AddEvent(new ColituAcEvent
@@ -608,7 +671,7 @@ public sealed class ColituVpnService
                 _whitelistTimer = null;
                 LogConnection("Whitelist mode ended: the foreign hosts answer again");
                 StatusChanged?.Invoke(Status);
-                return;
+                return false;
             }
             _whitelistTimer?.Dispose();
             _whitelistTimer = new System.Threading.Timer(_ => _ = CheckWhitelistAsync("re-check", afterFailures: false), null, ColituWhitelist.RecheckEvery, ColituWhitelist.RecheckEvery);
@@ -618,10 +681,15 @@ public sealed class ColituVpnService
             {
                 LogConnection("Whitelist mode: no server is flagged whitelist_ok; notice only");
                 Notice?.Invoke("notice.whitelistNone");
-                return;
+                return false;
             }
             LogConnection($"Whitelist mode: automatic mode uses the {flagged} whitelist server(s), bridges first");
             Notice?.Invoke("notice.whitelistOn");
+            if (inConnect)
+            {
+                // The running automatic connect goes on with the whitelist servers itself (same user action).
+                return true;
+            }
             if (afterFailures && IsAutoSelection && !_userDisconnected && Status is ColituVpnStatus.Error or ColituVpnStatus.Disconnected)
             {
                 try
@@ -633,10 +701,12 @@ public sealed class ColituVpnService
                     LogConnection($"Whitelist mode: connecting to a whitelist server failed ({ex.GetType().Name})");
                 }
             }
+            return true;
         }
         catch (Exception ex)
         {
             LogConnection($"Whitelist check failed: {ex.GetType().Name}");
+            return false;
         }
         finally
         {
@@ -646,8 +716,11 @@ public sealed class ColituVpnService
 
 
     /// <summary>Servers the panel hints as blocked in this country, for the network the hints came on.</summary>
-    private IReadOnlyCollection<string> HintedServers() =>
-        string.Equals(_session.NetworkHintsNetwork, _session.ClientNetwork, StringComparison.Ordinal) ? _session.NetworkHintsServers ?? [] : [];
+    private IReadOnlyCollection<string> HintedServers()
+    {
+        IReadOnlyCollection<string> blocked = string.Equals(_session.NetworkHintsNetwork, _session.ClientNetwork, StringComparison.Ordinal) ? _session.NetworkHintsServers ?? [] : [];
+        return blocked.Count == 0 ? blocked : ColituLocationSort.AddressBlocked(_lastServers, blocked, _whitelistMode);
+    }
 
     /// <summary>
     /// Pings every location with a probe address (see <see cref="ColituLatency"/>) and keeps the
@@ -716,14 +789,87 @@ public sealed class ColituVpnService
                 LogConnection($"Unreachable with the VPN off (hidden from the list and the automatic choice): {hidden.Count}/{dialled.Count}");
                 ColituEngineJournal.Instance.Add(ColituEngineJournal.Hidden, new { reason = "unreachable_vpn_off", servers = hidden.Order(StringComparer.OrdinalIgnoreCase).ToList(), of = dialled.Count }, at);
             }
+            // TLS-PROBE-SPEC §3: the panel's measurement targets, at most every interval_h per network.
+            _ = RunMeasureTargetsIfDueAsync();
+            // T2: no foreign server answered (four or more, two countries or more): checked before any connect.
+            if (AcEngine4Enabled && !_whitelistMode && ColituWhitelistLedger.PingsDue(servers, dialled) && _whitelistLedger.TryTakeCheck(network, at))
+            {
+                _ = CheckWhitelistAsync("no foreign server answered the pings with the VPN off", afterFailures: false, trigger: "pings");
+            }
             // Most servers fail with the VPN off: the network may let only whitelisted addresses through.
-            if (AcEngine4Enabled && dialled.Count >= 2 && failedCount * 2 >= dialled.Count)
+            else if (AcEngine4Enabled && dialled.Count >= 2 && failedCount * 2 >= dialled.Count)
             {
                 _ = CheckWhitelistAsync("most servers unreachable with the VPN off", afterFailures: false);
             }
         }
         return measured;
     }
+
+    /// <summary>
+    /// TLS-PROBE-SPEC §3: with the VPN off (not connected, not connecting) and targets from the panel, at most once
+    /// per interval_h on this network: every target TLS-probed in parallel outside the tunnel, the whole run ≤ 8 s,
+    /// one probe event each (measure:true). Cellular too; through an engaged kill switch. Only while the panel takes the events. Never throws.
+    /// </summary>
+    private async Task RunMeasureTargetsIfDueAsync()
+    {
+        try
+        {
+            var targets = _session.MeasureTargets;
+            if (targets == null || !ColituInsights.Instance.TlsProbeEvents)
+            {
+                return;
+            }
+            var network = CurrentNetworkKey();
+            var now = DateTimeOffset.UtcNow;
+            var vpnOn = Status != ColituVpnStatus.Disconnected || !TunnelOff;
+            TimeSpan? since = _session.MeasureRuns is { } runs && runs.TryGetValue(network, out var last) ? now - last : null;
+            if (!ColituIpBlock.MeasureDue(vpnOn, targets.Targets.Count, since, targets.IntervalH) || Interlocked.Exchange(ref _measuring, 1) == 1)
+            {
+                return;
+            }
+            try
+            {
+                var remembered = (_session.MeasureRuns ?? []).Where(item => item.Key != network)
+                    .OrderByDescending(item => item.Value).Take(31)
+                    .ToDictionary(item => item.Key, item => item.Value);
+                remembered[network] = now;
+                _session = _session with { MeasureRuns = remembered };
+                SaveState();
+                using var budget = new CancellationTokenSource(ColituIpBlock.MeasureRunMs);
+                var results = await ColituTlsProbe.ProbeManyAsync(targets.Targets, target => target.Host, target => target.Port, target => target.Sni,
+                    ColituNetwork.ProbeInterfaceName(), requirePin: false, OpenTlsProbes(), budget.Token);
+                if (Status != ColituVpnStatus.Disconnected || !TunnelOff)
+                {
+                    // A connect started meanwhile: never a measurement taken next to (or through) the tunnel.
+                    LogConnection("TLS measurement: the VPN started during the run, results dropped");
+                    return;
+                }
+                foreach (var (target, result) in results)
+                {
+                    if (result != null)
+                    {
+                        ColituInsights.Instance.AddEvent(ColituTlsProbe.Event(target.NodeId, target.Protocol, result, measure: true));
+                    }
+                }
+                LogConnection($"TLS measurement: {string.Join(", ", results.Where(item => item.Result != null).GroupBy(item => item.Result!.Class).Select(group => $"{group.Key} {group.Count()}"))} of {targets.Targets.Count}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _measuring, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"TLS measurement failed: {ex.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// The engaged nftables kill switch drops the TLS probes: the resolved address and port pairs get a uid-scoped
+    /// 10 s exception first (like the whitelist check). Null when the switch is not engaged.
+    /// </summary>
+    private Func<IReadOnlyList<(IPAddress Address, int Port)>, Task>? OpenTlsProbes() =>
+        _killSwitch.IsEngaged ? pairs => _killSwitch.AllowTlsProbesAsync(pairs) : null;
 
     /// <summary>
     /// Display-only pings through the tunnel (<see cref="ColituTunnelPing"/>) for servers without any
@@ -778,12 +924,13 @@ public sealed class ColituVpnService
     [
         ConnectedServer?.Id,
         Status is ColituVpnStatus.Disconnected ? null : SelectedServer?.Id,
-        SavedServerId
+        SavedServerId,
+        .. ColituLocationSort.WhitelistKeepVisible(_lastServers, _whitelistMode)
     ];
 
     /// <summary>What the automatic choice ranks: the list without the unreachable servers (<see cref="ColituReachability"/>).</summary>
     private List<ColituVpnServer> AutoCandidates() =>
-        _reachability.Visible(_lastServers, server => server.Id, [ConnectedServer?.Id]);
+        _reachability.Visible(_lastServers, server => server.Id, [ConnectedServer?.Id, .. ColituLocationSort.WhitelistKeepVisible(_lastServers, _whitelistMode)]);
 
     /// <summary>
     /// A connect that starts before the first server list (the PC was shut down while connected):
@@ -873,6 +1020,14 @@ public sealed class ColituVpnService
         {
             session = session with { WhitelistProbe = servers.WhitelistProbe };
         }
+        // TLS probe events only while the last list said the panel takes their fields (an older panel refuses the whole report).
+        ColituInsights.Instance.TlsProbeEvents = servers.TlsProbeEvents;
+        if (place.Network.IsNotEmpty() || servers.MeasureTargets != null)
+        {
+            // Fetched with the VPN off the list is the truth (absent = nothing to measure); through the tunnel the
+            // panel sees a foreign address and sends none, so the last list stays.
+            session = session with { MeasureTargets = servers.MeasureTargets };
+        }
         if (place.Network.IsNotEmpty())
         {
             // Fetched with the VPN off: the token and the hints belong to this network (no hints = none blocked).
@@ -885,7 +1040,13 @@ public sealed class ColituVpnService
             };
             if (servers.NetworkToken.IsNotEmpty())
             {
-                session = session with { NetworkToken = servers.NetworkToken, NetworkTokenNetwork = place.Network, NetworkTokenAt = DateTimeOffset.UtcNow };
+                session = session with
+                {
+                    NetworkToken = servers.NetworkToken,
+                    NetworkTokenNetwork = place.Network,
+                    NetworkTokenAt = DateTimeOffset.UtcNow,
+                    NetworkTokenPlace = ColituNetwork.PhysicalNetworkFingerprint()
+                };
             }
         }
         if (session == _session)
@@ -904,6 +1065,21 @@ public sealed class ColituVpnService
         _session.NetworkToken.IsNotEmpty() && string.Equals(_session.NetworkTokenNetwork, _session.ClientNetwork, StringComparison.Ordinal)
         && _session.NetworkTokenAt is { } at && DateTimeOffset.UtcNow - at < NetworkTokenValidFor
             ? _session.NetworkToken
+            : null;
+
+    /// <summary>
+    /// The token sent with <c>GET /servers</c>: through WARP or a multihop exit the panel sees a foreign IP,
+    /// and a valid RU token keeps the country (and the RU-only whitelist entry). Only the token of the
+    /// physical network this PC is on now; after a network change none, never the old one.
+    /// </summary>
+    private string? ServersNetworkToken() => ServersNetworkToken(_session, ColituNetwork.PhysicalNetworkFingerprint(), DateTimeOffset.UtcNow);
+
+    internal static string? ServersNetworkToken(ColituVpnSession session, string? currentPlace, DateTimeOffset now) =>
+        session.NetworkToken.IsNotEmpty() && session.NetworkTokenNetwork.IsNotEmpty()
+        && string.Equals(session.NetworkTokenNetwork, session.ClientNetwork, StringComparison.Ordinal)
+        && session.NetworkTokenAt is { } at && now - at < NetworkTokenValidFor
+        && session.NetworkTokenPlace.IsNotEmpty() && string.Equals(session.NetworkTokenPlace, currentPlace, StringComparison.Ordinal)
+            ? session.NetworkToken
             : null;
 
     /// <summary>Protocols the panel's hints call blocked on the current network.</summary>
@@ -938,7 +1114,7 @@ public sealed class ColituVpnService
     {
         try
         {
-            var servers = await _api.GetServersAsync();
+            var servers = await _api.GetServersAsync(ServersNetworkToken());
             RememberClientNetwork(servers);
             // Routes are looked up by id like nodes: a saved choice may be one of them.
             _lastServers = servers.Servers.Concat(servers.Multihop).ToList();
@@ -949,6 +1125,8 @@ public sealed class ColituVpnService
             _ = RefreshAdBlockAsync();
             // Adaptive Connect 4: the decision model (6 h cache, only with the switch on).
             _ = RefreshAcModelIfDueAsync();
+            // ColituGecko: whether the protocol menu offers it (once per app run, in the background).
+            CheckGeckoOfferInBackground();
             if (!IsAutoSelection && SelectedServer == null && _session.SelectedServerId.IsNotEmpty())
             {
                 SelectedServer = _lastServers.FirstOrDefault(s => string.Equals(s.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase));
@@ -1063,6 +1241,7 @@ public sealed class ColituVpnService
             if (Status == ColituVpnStatus.Connected)
             {
                 _connectFailuresInRow = 0;
+                _whitelistLedger.Reset();
                 // A cancelled attempt ends Disconnected and counts as nothing.
                 ColituInsights.Instance.ConnectFinished(true, insightWatch.ElapsedMilliseconds);
                 // Connected means internet was verified through the tunnel: one check per connect,
@@ -1130,6 +1309,7 @@ public sealed class ColituVpnService
         _pendingSpare = null;
         ResetSpareSwapDeferral();
         _failedThisConnect.Clear();
+        ResetGeckoForConnect();
         _lmLead = null;
         _apiUnreachable = false;
         OfferFastestServer = false;
@@ -1146,6 +1326,8 @@ public sealed class ColituVpnService
         _attemptNodeId = NodeIdOf(server);
         _attemptProtocol = null;
         _attemptEngine = null;
+        // ColituGecko picked in the protocol menu: a Gecko-only connection, whatever the server.
+        var geckoPicked = false;
 
         try
         {
@@ -1176,202 +1358,275 @@ public sealed class ColituVpnService
                 var wasEngaged = _killSwitch.IsEngaged;
                 killSwitchEngagedHere = await EngageKillSwitchAsync("TUN connecting") && !wasEngaged;
             }
-            if (automatic)
-            {
-                // A new exploration draw per automatic connect (the list showed the previous one).
-                _lmSeed = ColituLm.RandomSeed();
-            }
-            var ranked = automatic ? RankedServers(forConnect: true) : [];
-            var orderSource = automatic && _lastOrderEngine == ColituLm.EngineAc4 ? "ac4" : "app";
-            if (automatic && ranked.Count > 1 && orderSource != "ac4")
-            {
-                // The Go decision engine orders the candidates; the app's own order is the fallback.
-                (ranked, orderSource) = await ColituEngine.Instance.DecideOrderAsync("rank",
-                    ColituEngine.RankRequest(AutoCandidates(), _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
-                    ranked, item => item.Id);
-            }
-            if (automatic)
-            {
-                EmitChoiceEvent(ranked);
-                LogConnection(ranked.Count == 0
-                    ? "Automatic order: no server list yet; the panel chooses"
-                    : $"Automatic order ({orderSource}): {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
-            }
-            // Servers that carried nothing during this connect: not tried again, and excluded when
-            // the panel chooses.
-            var failed = new List<string>();
             ColituVpnServer? connected = null;
-            // Parallel connect: only the spare on the next server carried traffic, so it leads the next round.
-            ColituSpareServerWins? swap = null;
-            // Adaptive Connect 3.0: once set, the recovery set's servers replace the panel (API
-            // unreachable, no usable cache); the last server failure is what the connect ends with.
             ColituRecoverySet? recovery = null;
-            Exception? lastServerFailure = null;
-            // A spare that proved it carries traffic may still be followed once after the budget ran out.
-            var lateSwapUsed = false;
-            for (var round = 1; ; round++)
+            geckoPicked = GeckoPicked;
+            if (!geckoPicked && !WhitelistSelected && string.Equals(Preferences.PreferredTransport, ColituGeckoRules.Protocol, StringComparison.Ordinal))
             {
-                var wasSwap = swap != null;
-                var viaRecovery = recovery != null && !wasSwap;
-                // A server penalized on this network (both paths just died there) goes last, not first again.
-                var recoveryEnvelope = viaRecovery ? recovery!.NextServer(failed, PenalizedRecoveryServers(recovery!)) : null;
-                if (viaRecovery && recoveryEnvelope == null)
+                LogConnection("ColituGecko is picked but the panel does not offer it to this account: automatic");
+            }
+            // Adaptive Connect's steps: normal servers → Gecko-only → Whitelist (ColituConnectSteps).
+            var steps = ColituConnectSteps.Plan(geckoPicked, automatic, automatic && _whitelistMode, GeckoOffer);
+            if (steps.Contains(ColituConnectSteps.Gecko))
+            {
+                // Never waited for here; the Gecko step waits for it (at most 6 s) when nothing is cached.
+                StartGeckoConfigFetch(token);
+            }
+            LogConnection($"Connect steps: {string.Join(" > ", steps)}");
+            var geckoConnected = steps[0] == ColituConnectSteps.Gecko
+                && await TryGeckoStepAsync(geckoPicked, geckoPicked ? "picked by the user" : "whitelist mode, before the whitelist servers", token);
+            if (!geckoConnected)
+            {
+                try
                 {
-                    LogConnection($"Recovery set: all {recovery!.Configs.Count} server(s) tried, giving up");
-                    throw lastServerFailure ?? new ColituConnectException(Loc.I["err.noServers"]);
-                }
-                var target = swap != null
-                    ? FindServer(swap.Spare.ServerId) ?? swap.Spare.Config.Server ?? new ColituVpnServer { Id = swap.Spare.ServerId }
-                    : viaRecovery
-                    ? null
-                    : automatic
-                    ? ranked.FirstOrDefault(item => !failed.Contains(item.Id!, StringComparer.OrdinalIgnoreCase))
-                    : server;
                 if (automatic)
                 {
-                    // Per connect: the server of this round was ordered by the model or the app's rules, or chosen by the panel.
-                    _attemptEngine = ColituAcSpec.EngineOfRound(ranked.Count, panelChose: target == null && !viaRecovery && !wasSwap, _lastOrderEngine == ColituLm.EngineAc4);
+                    // A new exploration draw per automatic connect (the list showed the previous one).
+                    _lmSeed = ColituLm.RandomSeed();
                 }
-                if (round > 1)
+                var ranked = automatic ? RankedServers(forConnect: true) : [];
+                var orderSource = automatic && _lastOrderEngine == ColituLm.EngineAc4 ? "ac4" : "app";
+                if (automatic && ranked.Count > 1 && orderSource != "ac4")
                 {
-                    // First try = the first round, whichever of its pair (primary or spare) carried traffic.
-                    if (!(wasSwap && round == 2)) _connectFallback = true;
-                    ConnectStage = "connect.tryingOther";
-                    StatusChanged?.Invoke(Status);
-                    LogConnection($"Trying another server ({(viaRecovery ? $"recovery set, id={recoveryEnvelope!.Server?.Id}" : target == null ? "the panel chooses" : $"id={target.Id}")}, {connectWatch.ElapsedMilliseconds} ms into the connect)");
+                    // The Go decision engine orders the candidates; the app's own order is the fallback.
+                    (ranked, orderSource) = await ColituEngine.Instance.DecideOrderAsync("rank",
+                        ColituEngine.RankRequest(AutoCandidates(), _pings, _adaptive, CurrentNetworkKey(), _session.ClientCountry, DateTimeOffset.UtcNow),
+                        ranked, item => item.Id);
                 }
-                var configTask = swap != null ? Task.FromResult(swap.Spare.Config)
-                    : viaRecovery ? FetchRecoveryConfigAsync(recoveryEnvelope!, token)
-                    : FetchConfigAsync(target, token, keepPreference || round > 1, automatic, failed);
-                // Started after the primary's request reset the panel connections; never awaited.
-                // No new spare in the last round: a second spare winning would end the connect as failed.
-                var spareTask = lateSwapUsed ? null : viaRecovery ? StartRecoverySpare(recovery!, recoveryEnvelope!, failed, token) : StartSpareFetch(automatic, ranked, target, failed, token);
-                ColituVpnConfigResponse config;
-                try
+                if (automatic)
                 {
-                    config = await configTask;
+                    EmitChoiceEvent(ranked);
+                    LogConnection(ranked.Count == 0
+                        ? "Automatic order: no server list yet; the panel chooses"
+                        : $"Automatic order ({orderSource}): {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
                 }
-                catch (Exception ex) when (viaRecovery && !token.IsCancellationRequested)
+                // Servers that carried nothing during this connect: not tried again, and excluded when
+                // the panel chooses.
+                var failed = new List<string>();
+                // Parallel connect: only the spare on the next server carried traffic, so it leads the next round.
+                ColituSpareServerWins? swap = null;
+                // Adaptive Connect 3.0: once set, the recovery set's servers replace the panel (API
+                // unreachable, no usable cache); the last server failure is what the connect ends with.
+                Exception? lastServerFailure = null;
+                // A spare that proved it carries traffic may still be followed once after the budget ran out.
+                var lateSwapUsed = false;
+                // Whitelist trigger T1: once the check inside this connect finds an operator whitelist, the
+                // connect goes on with the whitelist servers and a fresh server budget (same user action).
+                var whitelistSwitched = false;
+                var budgetFrom = TimeSpan.Zero;
+                var roundBase = 0;
+                TimeSpan Budgeted() => connectWatch.Elapsed - budgetFrom;
+                for (var round = 1; ; round++)
                 {
-                    // Its settings could not be turned into a connection (e.g. a rotating exit needs VLESS).
-                    var skipped = recoveryEnvelope!.Server?.Id;
-                    LogConnection($"Recovery server {skipped} unusable ({ex.GetType().Name}: {ex.Message}); trying the next one");
-                    failed.Add(skipped!);
-                    lastServerFailure = ex;
-                    continue;
-                }
-                catch (Exception ex) when (!viaRecovery && !wasSwap && !token.IsCancellationRequested
-                    && ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable && ColituRecoverySet.IsApiUnreachable(ex), cacheUsable: false))
-                {
-                    // Every API base failed at the network level and nothing cached is left to try.
-                    recovery = BeginRecovery();
-                    if (recovery == null)
+                    var wasSwap = swap != null;
+                    var viaRecovery = recovery != null && !wasSwap;
+                    // A server penalized on this network (both paths just died there) goes last, not first again.
+                    var recoveryEnvelope = viaRecovery ? recovery!.NextServer(failed, PenalizedRecoveryServers(recovery!)) : null;
+                    if (viaRecovery && recoveryEnvelope == null)
                     {
-                        throw;
+                        LogConnection($"Recovery set: all {recovery!.Configs.Count} server(s) tried, giving up");
+                        throw lastServerFailure ?? new ColituConnectException(Loc.I["err.noServers"]);
                     }
-                    lastServerFailure = ex;
-                    continue;
-                }
-                var forcedFirst = swap?.Protocol;
-                swap = null;
-                token.ThrowIfCancellationRequested();
-                if (config.ServerId.IsNotEmpty() && target?.Id is { } requested && !string.Equals(config.ServerId, requested, StringComparison.OrdinalIgnoreCase))
-                {
-                    // The panel falls back to another healthy node when the preferred one is unavailable.
-                    LogConnection($"Panel selected fallback node {config.ServerId} instead of {requested}");
-                }
-
-                connected = FindServer(config.ServerId) ?? config.Server ?? target;
-                var connectedId = config.ServerId ?? connected?.Id;
-                _attemptNodeId = connected is { IsMultihop: true } ? null : ColituAcSpec.NodeId(connectedId) ?? _attemptNodeId;
-                try
-                {
-                    await ColituApiClient.PinDialHostsAsync(config, token);
-                    var profiles = await ImportConfigAsync(config, connected);
-                    if (forcedFirst != null && profiles.FindIndex(item => item.Candidate.Protocol == forcedFirst) is > 0 and var first)
+                    var target = swap != null
+                        ? FindServer(swap.Spare.ServerId) ?? swap.Spare.Config.Server ?? new ColituVpnServer { Id = swap.Spare.ServerId }
+                        : viaRecovery
+                        ? null
+                        : automatic
+                        ? ranked.FirstOrDefault(item => !failed.Contains(item.Id!, StringComparer.OrdinalIgnoreCase))
+                        : server;
+                    if (automatic)
                     {
-                        // It just carried traffic as the spare: it leads.
-                        var winner = profiles[first];
-                        profiles.RemoveAt(first);
-                        profiles.Insert(0, winner);
+                        // Per connect: the server of this round was ordered by the model or the app's rules, or chosen by the panel.
+                        _attemptEngine = ColituAcSpec.EngineOfRound(ranked.Count, panelChose: target == null && !viaRecovery && !wasSwap, _lastOrderEngine == ColituLm.EngineAc4);
                     }
-                    _currentProfiles = profiles;
-                    await PrepareConnectionModeAsync(config.Server?.CountryCode ?? connected?.CountryCode);
-                    // Whatever arrived by now (or was cached); the connect never waits for the spare.
-                    _spareServer = TakeSpareServer(spareTask, connectedId);
-                    // While the kill switch blocks (tunnel lost, or rules kept from a crashed run), let
-                    // this attempt's server (resolved with the config) through before the core dials it.
-                    if (_killSwitch.IsEngaged && KillSwitchApplies)
+                    if (round > 1)
                     {
-                        await EngageKillSwitchAsync("allow the new server before connecting");
+                        // First try = the first round, whichever of its pair (primary or spare) carried traffic.
+                        if (!(wasSwap && round == 2)) _connectFallback = true;
+                        ConnectStage = "connect.tryingOther";
+                        StatusChanged?.Invoke(Status);
+                        LogConnection($"Trying another server ({(viaRecovery ? $"recovery set, id={recoveryEnvelope!.Server?.Id}" : target == null ? "the panel chooses" : $"id={target.Id}")}, {connectWatch.ElapsedMilliseconds} ms into the connect)");
                     }
-                    // Automatic mode: about 20 s per server and 45 s for the whole connect.
-                    TimeSpan? serverBudget = automatic ? ServerBudget(connectWatch.Elapsed) : null;
-                    // Per server: a refusal seen on the previous server says nothing about this one.
-                    _credentialsRefused = false;
-                    var serverWatch = Stopwatch.StartNew();
+                    var configTask = swap != null ? Task.FromResult(swap.Spare.Config)
+                        : viaRecovery ? FetchRecoveryConfigAsync(recoveryEnvelope!, token)
+                        : FetchConfigAsync(target, token, keepPreference || round > 1, automatic, failed);
+                    // Started after the primary's request reset the panel connections; never awaited.
+                    // No new spare in the last round: a second spare winning would end the connect as failed.
+                    var spareTask = lateSwapUsed ? null : viaRecovery ? StartRecoverySpare(recovery!, recoveryEnvelope!, failed, token) : StartSpareFetch(automatic, ranked, target, failed, token);
+                    ColituVpnConfigResponse config;
                     try
                     {
-                        await StartFirstWorkingProfileAsync(profiles, config, connected, token, serverBudget);
+                        config = await configTask;
                     }
-                    catch (Exception ex) when ((_credentialsRefused || config.CredentialsPending) && !_serverOutageThisRound
-                        && ex is not (OperationCanceledException or ColituSpareServerWins))
+                    catch (Exception ex) when (viaRecovery && !token.IsCancellationRequested)
                     {
-                        // The panel creates this device's credentials for a server the first time it is
-                        // chosen and pushes them to the node at once; credentials_pending says the node
-                        // had not confirmed them when the settings were sent. The same server is tried
-                        // again every 2 s until it takes them (a picked server longer than an automatic one).
-                        // Not in a server outage: no port answered, new credentials cannot help. The retries
-                        // get what is left of this server's budget, not a second full one.
-                        var left = serverBudget is { } budget ? budget - serverWatch.Elapsed : (TimeSpan?)null;
-                        await RetryWhileCredentialsSettleAsync(profiles, config, connected, token,
-                            left is { } rest && rest < TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : left, automatic);
-                    }
-                    break;
-                }
-                catch (ColituSpareServerWins wins) when (ShouldFollowSpare(connectWatch.Elapsed, lateSwapUsed))
-                {
-                    // Roles swap: the spare's server and transport lead the next round (one quick reload).
-                    // Past the budget this happens once, and the connect ends on that proven server.
-                    lateSwapUsed |= connectWatch.Elapsed >= ConnectBudget;
-                    swap = wins;
-                    await StopCoreAsync();
-                }
-                catch (Exception ex) when (automatic && IsServerFailure(ex) && connectedId.IsNotEmpty())
-                {
-                    // Every transport of this server failed on this network: it goes last here for
-                    // 30 minutes, and the next ranked server gets its turn.
-                    _adaptive.Penalize(_networkKey, connectedId, DateTimeOffset.UtcNow);
-                    failed.Add(connectedId!);
-                    if (target?.Id is { Length: > 0 } targetId && !failed.Contains(targetId, StringComparer.OrdinalIgnoreCase))
-                    {
-                        failed.Add(targetId);
-                    }
-                    SaveState();
-                    lastServerFailure = ex;
-                    if (recovery != null)
-                    {
-                        // The set has at most four servers; the loop ends when none is left.
-                        LogConnection($"Server {connectedId} carried no traffic on this network ({ex.Message}); penalized for 30 minutes, trying the next recovery server");
-                        await StopCoreAsync();
+                        // Its settings could not be turned into a connection (e.g. a rotating exit needs VLESS).
+                        var skipped = recoveryEnvelope!.Server?.Id;
+                        LogConnection($"Recovery server {skipped} unusable ({ex.GetType().Name}: {ex.Message}); trying the next one");
+                        failed.Add(skipped!);
+                        lastServerFailure = ex;
                         continue;
                     }
-                    if (round >= ColituAdaptiveConnect.MaxServersPerConnect || connectWatch.Elapsed > NextServerDeadline)
+                    catch (Exception ex) when (!viaRecovery && !wasSwap && !token.IsCancellationRequested
+                        && ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable && ColituRecoverySet.IsApiUnreachable(ex), cacheUsable: false))
                     {
-                        // The settings that failed came from the cache because the panel was unreachable:
-                        // the cache is spent, so the recovery set is the last resort.
-                        if (ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable, cacheUsable: false) && BeginRecovery() is { } begun)
+                        // Every API base failed at the network level and nothing cached is left to try.
+                        recovery = BeginRecovery();
+                        if (recovery == null)
                         {
-                            recovery = begun;
+                            throw;
+                        }
+                        lastServerFailure = ex;
+                        continue;
+                    }
+                    var forcedFirst = swap?.Protocol;
+                    swap = null;
+                    token.ThrowIfCancellationRequested();
+                    if (config.ServerId.IsNotEmpty() && target?.Id is { } requested && !string.Equals(config.ServerId, requested, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The panel falls back to another healthy node when the preferred one is unavailable.
+                        LogConnection($"Panel selected fallback node {config.ServerId} instead of {requested}");
+                    }
+
+                    connected = FindServer(config.ServerId) ?? config.Server ?? target;
+                    var connectedId = config.ServerId ?? connected?.Id;
+                    _attemptNodeId = connected is { IsMultihop: true } ? null : ColituAcSpec.NodeId(connectedId) ?? _attemptNodeId;
+                    try
+                    {
+                        await ColituApiClient.PinDialHostsAsync(config, token);
+                        var profiles = await ImportConfigAsync(config, connected);
+                        if (forcedFirst != null && profiles.FindIndex(item => item.Candidate.Protocol == forcedFirst) is > 0 and var first)
+                        {
+                            // It just carried traffic as the spare: it leads.
+                            var winner = profiles[first];
+                            profiles.RemoveAt(first);
+                            profiles.Insert(0, winner);
+                        }
+                        _currentProfiles = profiles;
+                        await PrepareConnectionModeAsync(config.Server?.CountryCode ?? connected?.CountryCode);
+                        // Whatever arrived by now (or was cached); the connect never waits for the spare.
+                        _spareServer = TakeSpareServer(spareTask, connectedId);
+                        // While the kill switch blocks (tunnel lost, or rules kept from a crashed run), let
+                        // this attempt's server (resolved with the config) through before the core dials it.
+                        if (_killSwitch.IsEngaged && KillSwitchApplies)
+                        {
+                            await EngageKillSwitchAsync("allow the new server before connecting");
+                        }
+                        // Automatic mode: about 20 s per server and 45 s for the whole connect.
+                        TimeSpan? serverBudget = automatic ? ServerBudget(Budgeted()) : null;
+                        // Per server: a refusal seen on the previous server says nothing about this one.
+                        _credentialsRefused = false;
+                        var serverWatch = Stopwatch.StartNew();
+                        try
+                        {
+                            await StartFirstWorkingProfileAsync(profiles, config, connected, token, serverBudget);
+                        }
+                        catch (Exception ex) when ((_credentialsRefused || config.CredentialsPending) && !_serverOutageThisRound && !_ipBlockedThisRound
+                            && ex is not (OperationCanceledException or ColituSpareServerWins))
+                        {
+                            // The panel creates this device's credentials for a server the first time it is
+                            // chosen and pushes them to the node at once; credentials_pending says the node
+                            // had not confirmed them when the settings were sent. The same server is tried
+                            // again every 2 s until it takes them (a picked server longer than an automatic one).
+                            // Not in a server outage: no port answered, new credentials cannot help. The retries
+                            // get what is left of this server's budget, not a second full one.
+                            var left = serverBudget is { } budget ? budget - serverWatch.Elapsed : (TimeSpan?)null;
+                            await RetryWhileCredentialsSettleAsync(profiles, config, connected, token,
+                                left is { } rest && rest < TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : left, automatic);
+                        }
+                        break;
+                    }
+                    catch (ColituSpareServerWins wins) when (ShouldFollowSpare(Budgeted(), lateSwapUsed))
+                    {
+                        // Roles swap: the spare's server and transport lead the next round (one quick reload).
+                        // Past the budget this happens once, and the connect ends on that proven server.
+                        lateSwapUsed |= Budgeted() >= ConnectBudget;
+                        swap = wins;
+                        await StopCoreAsync();
+                    }
+                    catch (Exception ex) when (automatic && IsServerFailure(ex) && connectedId.IsNotEmpty())
+                    {
+                        // Every transport of this server failed on this network: it goes last here for
+                        // 30 minutes, and the next ranked server gets its turn.
+                        _adaptive.Penalize(_networkKey, connectedId, DateTimeOffset.UtcNow);
+                        failed.Add(connectedId!);
+                        if (target?.Id is { Length: > 0 } targetId && !failed.Contains(targetId, StringComparer.OrdinalIgnoreCase))
+                        {
+                            failed.Add(targetId);
+                        }
+                        SaveState();
+                        lastServerFailure = ex;
+                        NoteWhitelistServerFailure(ex, connectedId, connected ?? target);
+                        if (recovery == null && !whitelistSwitched && WhitelistServersDue())
+                        {
+                            // T1: the third failed server (two countries or more) on this network. The check runs
+                            // now, with this server's core stopped, before the next normal server is started.
+                            await StopCoreAsync();
+                            LogConnection($"Server {connectedId} carried no traffic ({ex.Message}); {_whitelistLedger.Count} servers failed on this network, checking for an operator whitelist");
+                            if (await CheckWhitelistAsync("servers failed in a connect", afterFailures: true, trigger: "servers", inConnect: true)
+                                && RankedServers(forConnect: true) is { Count: > 0 } whitelistOrder)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                // Adaptive Connect: normal → Gecko → Whitelist. Gecko gets its one try before the whitelist servers.
+                                if (ColituConnectSteps.After(steps, ColituConnectSteps.Normal) == ColituConnectSteps.Gecko
+                                    && await TryGeckoStepAsync(manual: false, "operator whitelist found, before the whitelist servers", token))
+                                {
+                                    geckoConnected = true;
+                                    break;
+                                }
+                                whitelistSwitched = true;
+                                ranked = whitelistOrder;
+                                orderSource = _lastOrderEngine == ColituLm.EngineAc4 ? "ac4" : "app";
+                                EmitChoiceEvent(ranked);
+                                LogConnection($"Whitelist mode: this connect goes on with the whitelist servers ({orderSource}): {string.Join(" > ", ranked.Take(5).Select(item => item.Id))}");
+                                budgetFrom = connectWatch.Elapsed;
+                                roundBase = round;
+                                continue;
+                            }
+                            token.ThrowIfCancellationRequested();
+                        }
+                        if (recovery != null)
+                        {
+                            // The set has at most four servers; the loop ends when none is left.
+                            LogConnection($"Server {connectedId} carried no traffic on this network ({ex.Message}); penalized for 30 minutes, trying the next recovery server");
                             await StopCoreAsync();
                             continue;
                         }
-                        LogConnection($"Server {connectedId} carried no traffic ({ex.Message}); {round} server(s) tried in {connectWatch.ElapsedMilliseconds} ms, giving up");
+                        if (round - roundBase >= ColituAdaptiveConnect.MaxServersPerConnect || Budgeted() > NextServerDeadline)
+                        {
+                            // The settings that failed came from the cache because the panel was unreachable:
+                            // the cache is spent, so the recovery set is the last resort.
+                            if (ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable, cacheUsable: false) && BeginRecovery() is { } begun)
+                            {
+                                recovery = begun;
+                                await StopCoreAsync();
+                                continue;
+                            }
+                            LogConnection($"Server {connectedId} carried no traffic ({ex.Message}); {round} server(s) tried in {connectWatch.ElapsedMilliseconds} ms, giving up");
+                            throw;
+                        }
+                        LogConnection($"Server {connectedId} carried no traffic on this network ({ex.Message}); penalized for 30 minutes, trying the next one");
+                        await StopCoreAsync();
+                    }
+                }
+                }
+                catch (Exception ex) when (automatic && !_geckoTriedThisConnect && steps.Contains(ColituConnectSteps.Gecko)
+                    && !token.IsCancellationRequested && GeckoMayFollow(ex))
+                {
+                    // Every normal server failed: Gecko is the next step (once per connect); if it fails too, the connect ends with the servers' failure.
+                    LogConnection($"Every server failed ({ex.GetType().Name}); ColituGecko is the next step");
+                    if (!await TryGeckoStepAsync(manual: false, "every server failed", token))
+                    {
                         throw;
                     }
-                    LogConnection($"Server {connectedId} carried no traffic on this network ({ex.Message}); penalized for 30 minutes, trying the next one");
-                    await StopCoreAsync();
+                    geckoConnected = true;
                 }
+            }
+            if (geckoConnected)
+            {
+                // Gecko picks its exit itself: there is no server to show or to remember.
+                connected = null;
+                recovery = null;
             }
 
             ConnectedServer = connected;
@@ -1405,6 +1660,7 @@ public sealed class ColituVpnService
             await ApplyKillSwitchForConnectedTunnelAsync();
             KillSwitchRecoveryPending = false;
             SetStatus(ColituVpnStatus.Connected);
+            AfterGeckoConnected();
             EmitConnectEvent(true, connectWatch.ElapsedMilliseconds, automatic, server, null);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -1424,7 +1680,12 @@ public sealed class ColituVpnService
         {
             ConnectStage = null;
             // A server the user picked where every transport failed: offer the fastest server (one tap).
-            OfferFastestServer = !automatic && server is not null && IsServerFailure(ex);
+            OfferFastestServer = !automatic && !geckoPicked && server is not null && IsServerFailure(ex);
+            if (!automatic && !geckoPicked && server is { Id.Length: > 0 })
+            {
+                // A picked server counts for the whitelist trigger too; it is never switched automatically.
+                NoteWhitelistServerFailure(ex, server.Id, server);
+            }
             LastError = FriendlyConnectionError(ex);
             LogConnection($"Connection failed: {ex}");
             if (!(ex is ColituApiException planError && IsPlanError(planError))
@@ -1644,7 +1905,7 @@ public sealed class ColituVpnService
     /// </summary>
     private string PostProcessConfig(CoreConfigContext context, string json)
     {
-        json = AddCheckInbound(context, ApplyWarmSpare(context, json));
+        json = AddCheckInbound(context, ApplyGecko(context, ApplyWarmSpare(context, json)));
         // Last, over everything the stages added: Xray 26.10 refuses repeated rule tags.
         return context.RunCoreType == ECoreType.Xray ? ColituXrayRuleTags.Unique(json) : json;
     }
@@ -2054,7 +2315,7 @@ public sealed class ColituVpnService
                 // "Best server" with the panel unreachable later falls back to the last one that answered.
                 SaveCachedConfig("auto", config);
             }
-            return RestrictToVlessIfNeeded(config, server);
+            return ForceWhitelistProtocol(RestrictToVlessIfNeeded(config, server), server);
         }
         catch (ColituApiException ex) when (ex.ErrorCode is "MULTIHOP_ROUTE_NOT_FOUND")
         {
@@ -2067,7 +2328,7 @@ public sealed class ColituVpnService
         {
             _apiUnreachable = ColituRecoverySet.IsApiUnreachable(ex);
             LogConnection($"Panel unreachable after {watch.ElapsedMilliseconds} ms ({ex.GetType().Name}); using cached connection settings for {cached.ServerId ?? cacheKey}");
-            return RestrictToVlessIfNeeded(cached, server);
+            return ForceWhitelistProtocol(RestrictToVlessIfNeeded(cached, server), server);
         }
         catch (Exception ex) when (!token.IsCancellationRequested && ColituRecoverySet.IsApiUnreachable(ex))
         {
@@ -2111,6 +2372,39 @@ public sealed class ColituVpnService
         }
         return restricted;
     }
+
+    /// <summary>
+    /// The whitelist protocol (vless-ws) is forced for the virtual "Beyaz Liste" row and for a whitelist-mode
+    /// connection that lands on a whitelist_ok node. Adaptive Connect still decides the server; this only
+    /// fixes the protocol. The row has no fallback to other transports; whitelist mode keeps the
+    /// normal candidates when the node offers no vless-ws.
+    /// </summary>
+    private ColituVpnConfigResponse ForceWhitelistProtocol(ColituVpnConfigResponse config, ColituVpnServer? server)
+    {
+        var row = WhitelistSelected && server is { IsMultihop: false }
+            && string.Equals(server.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase);
+        var mode = !row && _whitelistMode && server is not { IsMultihop: true }
+            && FindServer(config.ServerId ?? server?.Id)?.WhitelistOk == true;
+        if (!row && !mode)
+        {
+            // The normal order never holds a whitelist transport.
+            return ColituApiClient.WithoutWhitelistProtocols(config);
+        }
+        // Only whitelist transports, the relay (Reality, L4) before vless-ws; no fallback to the normal ones.
+        var restricted = ColituApiClient.RestrictToWhitelist(config);
+        if (restricted == null)
+        {
+            if (row)
+            {
+                throw new ColituConnectException(Loc.I["err.noServers"]);
+            }
+            return config;
+        }
+        LogConnection(row ? "Beyaz Liste: connecting with the whitelist protocol only" : "Whitelist mode: the whitelist protocol is used on this node");
+        return restricted;
+    }
+
+    internal const string ColituWhitelistProtocol = "vless-ws";
 
     private async Task RefreshServerListQuietlyAsync()
     {
@@ -2254,16 +2548,18 @@ public sealed class ColituVpnService
 
     public string? GetLastError() => LastError;
 
-    public void SelectServer(ColituVpnServer server) => SetSelection(server);
+    public void SelectServer(ColituVpnServer server, bool whitelist = false) => SetSelection(server, whitelist);
 
     public void SelectAuto() => SetSelection(null);
 
-    private void SetSelection(ColituVpnServer? server)
+    /// <param name="whitelist">true / false sets the virtual-row flag; null keeps it while the same server stays selected (a switch).</param>
+    private void SetSelection(ColituVpnServer? server, bool? whitelist = null)
     {
         SelectedServer = server;
         _session = _session with
         {
             SelectedServerId = server?.Id,
+            SelectedWhitelist = server != null && (whitelist ?? (_session.SelectedWhitelist && string.Equals(_session.SelectedServerId, server.Id, StringComparison.OrdinalIgnoreCase))),
             SelectionMode = server == null ? ColituServerSelectionModes.Best : ColituServerSelectionModes.Manual
         };
         SaveState();
@@ -2448,7 +2744,7 @@ public sealed class ColituVpnService
         DeleteRecoverySet();
         // The ping targets are this account's server addresses.
         AppManager.Instance.PingRouteTargets = [];
-        _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null, AdaptiveConnect3Remote = null };
+        _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null, AdaptiveConnect3Remote = null, MeasureTargets = null, MeasureRuns = null };
         ColituAdaptiveConnect3.SetRemote(false);
         try
         {
@@ -3488,7 +3784,9 @@ public sealed class ColituVpnService
                 ApiPorts = apiUris.Select(uri => uri.Port).Distinct().ToList(),
                 Resolvers = resolvers,
                 // Plain DNS of the physical interface, app only: server names when DoH is blocked (China).
-                AdapterResolvers = ColituNetwork.AdapterDnsServers()
+                AdapterResolvers = ColituNetwork.AdapterDnsServers(),
+                // ColituGecko: the entries gecko-client dials (its process is the app's uid), only for a Gecko-only connection.
+                Gecko = await GeckoKillSwitchEntriesAsync()
             };
             await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences), Preferences.KillSwitchAllowLan);
             LogConnection($"Kill switch engaged ({reason}), {allowed.Servers.Count} server, {api.Distinct().Count()} API and {resolvers.Distinct().Count()} resolver and {allowed.AdapterResolvers.Count} adapter DNS addresses allowed");
@@ -3617,8 +3915,13 @@ public sealed class ColituVpnService
         {
             inbound.AllowLANConn = false;
         }
-        // Hysteria2 is not an Xray protocol; it runs on the bundled sing-box core.
-        _config.CoreTypeItem = [new CoreTypeItem { ConfigType = EConfigType.Hysteria2, CoreType = ECoreType.sing_box }];
+        // Hysteria2 is not an Xray protocol; it runs on the bundled sing-box core. The ColituGecko profile
+        // (a SOCKS outbound to gecko-client, TCP and UDP) runs on sing-box too.
+        _config.CoreTypeItem =
+        [
+            new CoreTypeItem { ConfigType = EConfigType.Hysteria2, CoreType = ECoreType.sing_box },
+            new CoreTypeItem { ConfigType = EConfigType.SOCKS, CoreType = ECoreType.sing_box }
+        ];
         // Port hopping (mport on the panel's hysteria2:// links): a new UDP port every 30 s, so a
         // mobile network that throttles one long-lived UDP flow never sees one. Both cores ignore
         // values under 5 s; a stale value from an old settings file must not slow or break the hops.
@@ -3665,15 +3968,18 @@ public sealed class ColituVpnService
             var type = candidate.Protocol switch
             {
                 "hysteria2" => EConfigType.Hysteria2,
-                "vless-reality" or "vless-xhttp" => EConfigType.VLESS,
+                "vless-reality" or "vless-xhttp" or "vless-ws" or "vless-reality-relay" => EConfigType.VLESS,
                 "trojan" => EConfigType.Trojan,
                 "shadowsocks" => EConfigType.Shadowsocks,
                 _ => (EConfigType?)null
             };
             // Both VLESS transports import as VLESS profiles; the network tells them apart.
-            var xhttp = candidate.Protocol == "vless-xhttp";
+            var wantedNetwork = candidate.Protocol switch { "vless-xhttp" => "xhttp", "vless-ws" => "ws", _ => null };
             var profile = profiles.FirstOrDefault(item => type != null && item.ConfigType == type && !used.Contains(item.IndexId)
-                && (type != EConfigType.VLESS || string.Equals(item.Network, "xhttp", StringComparison.OrdinalIgnoreCase) == xhttp));
+                && (type != EConfigType.VLESS
+                    || (wantedNetwork == null
+                        ? !string.Equals(item.Network, "xhttp", StringComparison.OrdinalIgnoreCase) && !string.Equals(item.Network, "ws", StringComparison.OrdinalIgnoreCase)
+                        : string.Equals(item.Network, wantedNetwork, StringComparison.OrdinalIgnoreCase))));
             if (profile == null) continue;
             used.Add(profile.IndexId);
             ordered.Add((candidate, profile));
@@ -3686,6 +3992,9 @@ public sealed class ColituVpnService
 
         var serverId = config.ServerId ?? server?.Id;
         _serverOutageThisRound = false;
+        _ipBlockedThisRound = false;
+        _tlsGate?.Cancel();
+        _tlsGate = null;
         _roundLatency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var lastGood = _adaptive.LastGoodTransport(_networkKey, serverId, DateTimeOffset.UtcNow);
         var offered = ordered.Select(item => item.Candidate.Protocol).ToList();
@@ -3702,14 +4011,26 @@ public sealed class ColituVpnService
         {
             LogConnection($"no memory of this network, starting with the hinted [{string.Join(", ", hinted.Select(item => item.Candidate.Protocol))}]");
             LogConnection($"Transport order: {string.Join(" > ", hinted.Select(item => item.Candidate.Protocol))} (hinted, no probe)");
+            // No round probe here: the ip_blocked TLS probes run next to the first attempt and are only looked at
+            // when it fails (a first attempt that works never waits for them).
+            var tlsTargets = hinted.ToList();
+            _tlsGate = new ColituTlsGate(cancel => ProbeRoundTlsAsync(tlsTargets, cancel));
             return PreferLmLead(hinted, serverId);
         }
+        // TLS probes of up to two ports run next to the TCP probe (at most 3 s more): a network that resets the
+        // TLS handshake to this address on two ports blocks the server, not a transport.
+        var tlsProbe = ProbeRoundTlsAsync(ordered);
         var latency = await MeasureTransportLatencyAsync(ordered);
         _roundLatency = latency;
+        var tls = await tlsProbe;
         _serverOutageThisRound = ColituTransportOrder.ServerOutage(latency) && await InternetReachableDirectAsync();
         if (_serverOutageThisRound)
         {
             LogConnection("No transport of this server answers outside the tunnel while the internet does: a server outage, failed transports of this round are not marked");
+        }
+        else
+        {
+            NoteRoundTls(tls);
         }
         if (_marksIgnored)
         {
@@ -3719,18 +4040,18 @@ public sealed class ColituVpnService
                 .OrderBy(item => ColituTransportOrder.IgnoredMarksTier(item.Candidate.Protocol,
                     protocol => string.Equals(lastGood, protocol, StringComparison.OrdinalIgnoreCase) || proven.Contains(protocol, StringComparer.OrdinalIgnoreCase),
                     Stalled, _failedThisConnect.Contains))
-                .ThenBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(item.Candidate.Protocol, -1), false, false, HintedBlocked(item.Candidate.Protocol)))
-                .ThenBy(item => latency.GetValueOrDefault(item.Candidate.Protocol, int.MaxValue))
+                .ThenBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(LatencyKey(item), -1), false, false, HintedBlocked(item.Candidate.Protocol)))
+                .ThenBy(item => latency.GetValueOrDefault(LatencyKey(item), int.MaxValue))
                 .ToList();
         }
         else
         {
             ordered = ordered
-                .OrderBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(item.Candidate.Protocol, -1), serverId, lastGood))
-                .ThenBy(item => latency.GetValueOrDefault(item.Candidate.Protocol, int.MaxValue))
+                .OrderBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(LatencyKey(item), -1), serverId, lastGood))
+                .ThenBy(item => latency.GetValueOrDefault(LatencyKey(item), int.MaxValue))
                 .ToList();
         }
-        LogConnection($"Transport order: {string.Join(" > ", ordered.Select(item => $"{item.Candidate.Protocol}({LatencyText(latency, item.Candidate.Protocol)})"))}");
+        LogConnection($"Transport order: {string.Join(" > ", ordered.Select(item => $"{item.Candidate.Protocol}({LatencyText(latency, LatencyKey(item))})"))}");
         return PreferLmLead(ordered, serverId);
     }
 
@@ -3761,31 +4082,36 @@ public sealed class ColituVpnService
         return first.Concat(ordered.Where(item => !first.Contains(item))).ToList();
     }
 
-    private static string LatencyText(Dictionary<string, int> latency, string protocol)
+    /// <summary>The key of a transport's endpoint in the round's latency map (protocol and port).</summary>
+    private static string LatencyKey((ColituConfigCandidate Candidate, ProfileItem Profile) item) =>
+        ColituTransportOrder.EndpointKey(item.Candidate.Protocol, item.Profile.Port);
+
+    private static string LatencyText(Dictionary<string, int> latency, string key)
     {
-        if (!latency.TryGetValue(protocol, out var ms)) return "udp";
+        if (!latency.TryGetValue(key, out var ms)) return "udp";
         return ms < 0 ? "unreachable" : $"{ms} ms";
     }
 
     /// <summary>
-    /// TCP connect time to each TCP transport's endpoint, two attempts in parallel, best of two.
+    /// TCP connect time to each TCP transport's endpoint, two attempts in parallel, best of two, keyed by
+    /// endpoint (<see cref="ColituTransportOrder.EndpointKey"/>): two endpoints of one protocol keep two values.
     /// Hysteria2 is UDP and has no cheap handshake, so it is not measured. -1 = no answer.
     /// </summary>
     private async Task<Dictionary<string, int>> MeasureTransportLatencyAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles)
     {
-        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var tasks = profiles
             .Where(item => item.Profile.ConfigType != EConfigType.Hysteria2)
             .Select(async item =>
             {
                 var attempts = await Task.WhenAll(TcpConnectMsAsync(item.Profile.Address, item.Profile.Port), TcpConnectMsAsync(item.Profile.Address, item.Profile.Port));
                 var reachable = attempts.Where(ms => ms >= 0).ToList();
-                return (item.Candidate.Protocol, Ms: reachable.Count > 0 ? reachable.Min() : -1);
+                return (item.Candidate.Protocol, item.Profile.Port, Ms: reachable.Count > 0 ? reachable.Min() : -1);
             })
             .ToList();
-        foreach (var (protocol, ms) in await Task.WhenAll(tasks))
+        var measured = await Task.WhenAll(tasks);
+        var result = ColituTransportOrder.EndpointLatency(measured);
+        foreach (var (protocol, _, ms) in measured)
         {
-            result[protocol] = ms;
             ColituInsights.Instance.AddEvent(new ColituAcEvent
             {
                 Kind = "probe",
@@ -3796,6 +4122,60 @@ public sealed class ColituVpnService
             });
         }
         return result;
+    }
+
+    /// <summary>
+    /// TLS-PROBE-SPEC §2: TLS probes of up to two endpoints of distinct ports among the TLS TCP transports, outside
+    /// the tunnel (bound to the physical interface, through the kill switch), in parallel. The whole run ends 5.5 s after
+    /// the round start, next to the TCP probe's 2.5 s: at most 3 s more. Never throws; empty when nothing was probed.
+    /// </summary>
+    private async Task<List<(string Protocol, ColituTlsResult Result)>> ProbeRoundTlsAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles, CancellationToken cancel = default)
+    {
+        try
+        {
+            var picked = ColituIpBlock.PickEndpoints(profiles.Where(item => item.Profile.ConfigType != EConfigType.Hysteria2),
+                item => item.Candidate.Protocol, item => item.Profile.Port);
+            if (picked.Count == 0)
+            {
+                return [];
+            }
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            budget.CancelAfter(ColituTlsProbe.ConnectTimeoutMs + ColituTlsProbe.HandshakeTimeoutMs);
+            // Bound to the physical interface; an engaged kill switch lets exactly these address and port pairs through for 10 s.
+            var results = await ColituTlsProbe.ProbeManyAsync(picked, item => item.Profile.Address, item => item.Profile.Port, item => item.Profile.Sni,
+                ColituNetwork.ProbeInterfaceName(), requirePin: false, OpenTlsProbes(), budget.Token);
+            return results.Where(item => item.Result != null).Select(item => (item.Item.Candidate.Protocol, item.Result!)).ToList();
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"TLS probe failed ({ex.GetType().Name}); no ip_blocked check this round");
+            return [];
+        }
+    }
+
+    /// <summary>Applies the classifier to this round's TLS probes: ip_blocked skips the server (one probe event per port).</summary>
+    private void NoteRoundTls(List<(string Protocol, ColituTlsResult Result)> tls)
+    {
+        if (tls.Count == 0)
+        {
+            return;
+        }
+        var results = tls.Select(item => item.Result).ToList();
+        var summary = string.Join(", ", tls.Select(item => $"{item.Protocol}:{item.Result.Port} {item.Result.Class} {item.Result.Ms} ms"));
+        if (ColituIpBlock.IsBlocked(results))
+        {
+            _ipBlockedThisRound = true;
+            LogConnection($"TLS probe: reset on two ports ({summary}): the network blocks this server's address (ip_blocked)");
+            foreach (var (protocol, result) in tls)
+            {
+                // Dropped by the queue unless the panel set features.tls_probe_events.
+                ColituInsights.Instance.AddEvent(ColituTlsProbe.Event(_attemptNodeId, protocol, result, measure: false));
+            }
+        }
+        else if (ColituIpBlock.OneReset(results))
+        {
+            LogConnection($"TLS probe: one reset, not blocked ({summary})");
+        }
     }
 
     private static async Task<int> TcpConnectMsAsync(string address, int port)
@@ -3828,7 +4208,9 @@ public sealed class ColituVpnService
         "vless-xhttp" => 2,
         "trojan" => 3,
         "shadowsocks" => 4,
-        _ => 5
+        "vless-reality-relay" => 5,
+        "vless-ws" => 6,
+        _ => 7
     };
 
     /// <summary>
@@ -3898,11 +4280,29 @@ public sealed class ColituVpnService
         }
     }
 
+    /// <summary>
+    /// ip_blocked (TLS-PROBE-SPEC §2): the network resets TLS to this address on two ports. No transport of it
+    /// (Hysteria2 and Shadowsocks included) is tried and none is marked; the server is penalized for 30 minutes and
+    /// fails at once: the automatic connect notes it once in the whitelist ledger and moves on, a picked one fails here.
+    /// </summary>
+    private void ThrowIpBlocked(ColituVpnConfigResponse config, ColituVpnServer? server, int skipped)
+    {
+        var blockedServer = config.ServerId ?? server?.Id;
+        _adaptive.Penalize(_networkKey, blockedServer, DateTimeOffset.UtcNow);
+        SaveState();
+        LogConnection($"Server {blockedServer}: the network resets TLS to its address (ip_blocked); {skipped} transport(s) skipped, none is marked");
+        throw new ColituConnectException(Loc.I["err.ipBlocked"]);
+    }
+
     private async Task StartFirstWorkingProfileAsync(List<(ColituConfigCandidate Candidate, ProfileItem Profile)> profiles, ColituVpnConfigResponse config, ColituVpnServer? server, CancellationToken token, TimeSpan? serverBudget = null)
     {
+        if (_ipBlockedThisRound)
+        {
+            ThrowIpBlocked(config, server, profiles.Count);
+        }
         if (_serverOutageThisRound)
         {
-            if (ColituTransportOrder.NothingCanConnect(profiles, item => item.Candidate.Protocol, _roundLatency))
+            if (ColituTransportOrder.NothingCanConnect(profiles, LatencyKey, _roundLatency))
             {
                 // No UDP transport to fall back on and no TCP port answered: each one would cost 6-8 s.
                 var outageServer = config.ServerId ?? server?.Id;
@@ -3911,7 +4311,7 @@ public sealed class ColituVpnService
                 LogConnection($"Server outage and no transport left to try; server {outageServer} penalized for 30 minutes");
                 throw new ColituConnectException(Loc.I["err.unreachable"]);
             }
-            var reachable = ColituTransportOrder.WithoutSilent(profiles, item => item.Candidate.Protocol, _roundLatency);
+            var reachable = ColituTransportOrder.WithoutSilent(profiles, LatencyKey, _roundLatency);
             if (reachable.Count < profiles.Count)
             {
                 LogConnection($"Server outage: transports whose port does not answer are skipped this round ({string.Join(", ", profiles.Except(reachable).Select(item => item.Candidate.Protocol))})");
@@ -3995,6 +4395,20 @@ public sealed class ColituVpnService
                         // the spare (XHTTP) only ever shows up when it failed as a primary.
                         observations.Add(new ColituProtocolObservation { Protocol = plan.Protocol, Reachable = spareProbe.Success, LatencyMs = spareProbe.LatencyMs });
                     }
+                    if (_tlsGate is { } gate && (outcome == ColituParallelOutcome.PrimaryWins || spareProbe is not { Success: true }))
+                    {
+                        // Hinted start: the first attempt ended. Carried traffic → the TLS probes are cancelled, never
+                        // waited for. Failed → their result (≤ 3 s more): ip_blocked skips the server before any mark.
+                        _tlsGate = null;
+                        if (await gate.AfterAttemptAsync(outcome == ColituParallelOutcome.PrimaryWins) is { } tls)
+                        {
+                            NoteRoundTls(tls);
+                            if (_ipBlockedThisRound)
+                            {
+                                ThrowIpBlocked(config, server, profiles.Count - index);
+                            }
+                        }
+                    }
                     if (outcome == ColituParallelOutcome.PrimaryWins)
                     {
                         // The spare of the first round, promoted after a swap, is still the first try.
@@ -4072,6 +4486,9 @@ public sealed class ColituVpnService
         }
         finally
         {
+            // Leaving the server (any way): TLS probes still running are not needed any more.
+            _tlsGate?.Cancel();
+            _tlsGate = null;
             // Observations are per node; a route's id is not one.
             if (config.Server?.IsMultihop != true && server?.IsMultihop != true)
             {
@@ -4185,27 +4602,35 @@ public sealed class ColituVpnService
         }
 
         await ConfigHandler.SetDefaultRouting(_config, routing);
-        LogConnection(RussianSitesDirect(serverCountry, preferences.PrivacyModeEnabled)
-            ? "Routing profile applied: DNS protection, Russian sites direct"
-            : preferences.PrivacyModeEnabled
-                ? "Routing profile applied: DNS protection, privacy mode (all traffic through the VPN)"
-                : "Routing profile applied: DNS protection, Russian sites through the Russian server");
+        LogConnection(preferences.PrivacyModeEnabled
+            ? "Routing profile applied: DNS protection, privacy mode (everything but Russian sites through the VPN), Russian sites direct"
+            : "Routing profile applied: DNS protection, Russian sites direct");
     }
 
     /// <summary>
-    /// Russian sites skip the tunnel unless the server itself is in Russia: someone abroad who
-    /// picks the Moscow server wants exactly those sites to see a Russian address.
-    /// Privacy mode sends everything through the tunnel, Russian sites included.
+    /// Russian destinations ALWAYS leave directly from the device, never through the tunnel (owner
+    /// decision 2026-11-20): in every mode, for every server (also one in Russia), in the split-tunnel
+    /// "include" mode too, whatever the settings. Privacy mode only governs the rest of the traffic.
+    /// The nodes refuse Russian destinations as well.
     /// </summary>
-    internal static bool RussianSitesDirect(string? serverCountry, bool privacyMode = false) =>
-        !privacyMode && !string.Equals(serverCountry?.Trim(), "RU", StringComparison.OrdinalIgnoreCase);
+    internal static bool RussianSitesDirect() => true;
+
+    /// <summary>Domain matchers of the Russian direct rule: the geosite list plus the suffixes the nodes refuse too.</summary>
+    internal static readonly string[] RussianDirectDomains =
+    [
+        "geosite:category-ru",
+        "domain:ru", "domain:su", "domain:xn--p1ai", "domain:xn--d1acj3b", "domain:xn--80asehdb",
+        "domain:moscow", "domain:tatar",
+        "domain:vk.com", "domain:vk.me", "domain:vkontakte.com", "domain:userapi.com", "domain:vk-cdn.net",
+        "domain:vkuser.net", "domain:mycdn.me",
+        "domain:yandex.com", "domain:yandex.net", "domain:yastatic.net", "domain:yandex.by", "domain:yandex.kz",
+        "domain:ya.cc", "domain:ok.me", "domain:odnoklassniki.com", "domain:tinkoff.com", "domain:tbank.com",
+    ];
 
     internal static List<RulesItem> BuildColituRoutingRules(ColituVpnPreferences preferences, string? serverCountry = null)
     {
         preferences = preferences.Normalize();
-        // "Only selected apps and sites use the VPN": everything else is direct anyway, and a
-        // selected app's Russian sites must stay in the tunnel the user asked for.
-        var ruDirect = RussianSitesDirect(serverCountry, preferences.PrivacyModeEnabled) && !ColituSplitTunnel.IsIncludeActive(preferences);
+        var ruDirect = RussianSitesDirect();
         var rules = new List<RulesItem>();
 
         rules.Add(new RulesItem
@@ -4239,20 +4664,17 @@ public sealed class ColituVpnService
             Enabled = true
         });
 
-        // Russian sites and apps (banks, Gosuslugi, Wildberries, ...) refuse connections from a
-        // foreign IP ("turn off your VPN"), so they go out directly, as on iOS and Android; through
-        // a Russian server they already arrive from a Russian address and stay in the tunnel.
+        // Russian destinations ALWAYS go out directly, as on iOS and Android: banks, Gosuslugi,
+        // Wildberries, ... refuse connections from a foreign IP, and the nodes refuse them too. In
+        // every mode, for every server, and ahead of the user's split-tunnel lists and every proxy rule.
         // Xray reads these from bin/geo*.dat (XRAY_LOCATION_ASSET), sing-box from bin/srss/*.srs
         // (shipped by scripts/package-linux.sh; GitHub, where sing-box would fetch them, is blocked in Russia).
-        // The user's split tunneling comes before Colitu's own regional rules.
-        rules.AddRange(ColituSplitTunnel.BuildRules(preferences));
-
         rules.Add(new RulesItem
         {
             Id = "colitu-ru-direct-domain",
             Remarks = "Russian sites direct",
             OutboundTag = Global.DirectTag,
-            Domain = ["geosite:category-ru"],
+            Domain = [.. RussianDirectDomains],
             Enabled = ruDirect
         });
 
@@ -4264,6 +4686,9 @@ public sealed class ColituVpnService
             Ip = ["geoip:ru"],
             Enabled = ruDirect
         });
+
+        // The user's split tunneling comes after: Russian destinations are decided above.
+        rules.AddRange(ColituSplitTunnel.BuildRules(preferences));
 
         if (ColituSplitTunnel.BuildCatchAllRule(preferences) is { } rest)
         {
@@ -4397,6 +4822,7 @@ public sealed class ColituVpnService
         _spareVerifyInbound = null;
         _checkInbound = null;
         _checkIndexId = profileItem.IndexId;
+        PrepareGeckoForCoreStart(profileItem);
         await CoreManager.Instance.LoadCore(mainContext, allResult.PreSocksResult?.Context);
 
         // The core needs a moment to load its geo data, longer on the first run
@@ -4424,6 +4850,9 @@ public sealed class ColituVpnService
         {
             throw new InvalidOperationException($"VPN core started but local SOCKS port {socksPort} is not listening.");
         }
+
+        // The Gecko-only profile: gecko-client carries everything, so it must be up (session) before the check.
+        await StartGeckoAsync(_config.TunModeItem.EnableTun, token);
 
         if (_config.TunModeItem.EnableTun)
         {
@@ -4567,14 +4996,54 @@ public sealed class ColituVpnService
         "http://www.msftconnecttest.com/connecttest.txt"
     ];
 
-    /// <summary>A traffic check answer that proves the tunnel carries traffic: 2xx (generate_204 answers 204).</summary>
-    internal static bool IsTrafficProbeSuccess(int statusCode) => statusCode is >= 200 and < 300;
+    /// <summary>At most this much of a check answer is read.</summary>
+    internal const int TrafficProbeMaxBody = 4096;
+
+    /// <summary>
+    /// A traffic check answer that proves the tunnel carries traffic: the check page's own answer,
+    /// not just a status code. A server that refused us (empty user list, a Reality fallback to its
+    /// cover site, a captive portal) can still answer 200 with some page.
+    /// </summary>
+    internal static bool IsTrafficProbeSuccess(string url, int statusCode, string body)
+    {
+        if (url.EndsWith("/generate_204", StringComparison.Ordinal))
+        {
+            return statusCode == 204 && body.Length == 0;
+        }
+        if (url.EndsWith("/library/test/success.html", StringComparison.Ordinal))
+        {
+            return statusCode == 200 && body.Contains("<TITLE>Success</TITLE>", StringComparison.OrdinalIgnoreCase);
+        }
+        if (url.EndsWith("/connecttest.txt", StringComparison.Ordinal))
+        {
+            return statusCode == 200 && body.Trim() == "Microsoft Connect Test";
+        }
+        // A page without a known answer never proves the tunnel.
+        return false;
+    }
+
+    private static async Task<string> ReadProbeBodyAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(token);
+        var buffer = new byte[TrafficProbeMaxBody];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total), token);
+            if (read == 0)
+            {
+                break;
+            }
+            total += read;
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer, 0, total);
+    }
 
     /// <summary>
     /// Fetches small "connectivity check" pages (<see cref="TrafficProbeUrls"/>) through the tunnel,
     /// all at once, and succeeds on the first 2xx answer. Two rounds of at most seven seconds (or <paramref name="roundTimeout"/>).
     /// </summary>
-    private static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default, Func<bool>? giveUp = null, TimeSpan? roundTimeout = null,
+    internal static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default, Func<bool>? giveUp = null, TimeSpan? roundTimeout = null,
         NetworkCredential? credentials = null)
     {
         var timeout = roundTimeout ?? TimeSpan.FromSeconds(7);
@@ -4628,11 +5097,12 @@ public sealed class ColituVpnService
             request.Headers.UserAgent.TryParseAdd($"ColituVPN/{ColituAuthService.ClientVersion}");
             var watch = Stopwatch.StartNew();
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-            if (IsTrafficProbeSuccess((int)response.StatusCode))
+            var body = await ReadProbeBodyAsync(response, token);
+            if (IsTrafficProbeSuccess(url, (int)response.StatusCode, body))
             {
                 return new(true, $"{url} returned {(int)response.StatusCode}", (int)watch.ElapsedMilliseconds);
             }
-            errors.Enqueue($"{url}: HTTP {(int)response.StatusCode}");
+            errors.Enqueue($"{url}: HTTP {(int)response.StatusCode}, not the check page's answer ({body.Length} bytes)");
         }
         catch (Exception ex) when (!token.IsCancellationRequested || ex is not OperationCanceledException)
         {
@@ -4704,6 +5174,8 @@ public sealed class ColituVpnService
     /// <summary>Stops the core and removes its generated config files, which contain the server credentials.</summary>
     private static async Task StopCoreAsync()
     {
+        // gecko-client first: without the core nothing may use it.
+        ColituGecko.Instance.Stop();
         await CoreManager.Instance.CoreStop();
         foreach (var name in new[] { Global.CoreConfigFileName, Global.CorePreConfigFileName })
         {
@@ -4877,7 +5349,7 @@ public sealed class ColituVpnService
 
     private static string StatePath() => Utils.GetConfigPath("colitu-vpn-state.json");
 
-    private sealed record ColituTrafficProbeResult(bool Success, string Detail, int? LatencyMs = null);
+    internal sealed record ColituTrafficProbeResult(bool Success, string Detail, int? LatencyMs = null);
 }
 
 public enum ColituVpnStatus
@@ -4962,6 +5434,10 @@ public sealed class ColituServersResponse
     public bool? AcEngine4 { get; set; }
     /// <summary>AC4 whitelist check: domestic hosts per country (upper-case ISO-2); empty when none.</summary>
     public Dictionary<string, List<string>> WhitelistProbe { get; set; } = [];
+    /// <summary>TLS measurement targets (<c>measure_targets</c>); null when absent or empty.</summary>
+    public ColituMeasureTargets? MeasureTargets { get; set; }
+    /// <summary><c>features.tls_probe_events</c>: the panel takes the TLS probe event fields (false when absent).</summary>
+    public bool TlsProbeEvents { get; set; }
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
 }
@@ -5247,7 +5723,13 @@ public sealed record ColituVpnPreferences(
     string LocationSort = ColituLocationSort.Name,
     // The kill switch lets the local network (printers, NAS, the router page) through; off: only
     // link-local, multicast and DHCP. On by default, as before this setting existed.
-    bool KillSwitchAllowLan = true)
+    bool KillSwitchAllowLan = true,
+    // ColituGecko F-14/F-15: the highest configuration "issued" gecko-client accepted and the highest revision it held per skin;
+    // given back at the next start so that an older configuration or skin descriptor is refused.
+    long GeckoMinIssued = 0,
+    Dictionary<string, long>? GeckoSkinRevs = null,
+    // The connection method picked on the home screen: "" = automatic, "colitu-gecko" = ColituGecko (Gecko only, whatever the server).
+    string PreferredTransport = "")
 {
     /// <summary>
     /// Preferences of a first run (no saved state yet): privacy mode on, Simple mode. The record
@@ -5275,7 +5757,8 @@ public sealed record ColituVpnPreferences(
             SplitTunnelingEnabled = splitMode != ColituSplitTunnelModes.Off,
             Language = language,
             ConnectionMode = connectionMode,
-            LocationSort = ColituLocationSort.Normalize(LocationSort)
+            LocationSort = ColituLocationSort.Normalize(LocationSort),
+            PreferredTransport = ColituTransportChoice.Normalize(PreferredTransport)
         };
     }
 
@@ -5321,6 +5804,8 @@ public sealed record ColituVpnSession
 {
     public ColituVpnStatus Status { get; init; } = ColituVpnStatus.Disconnected;
     public string? SelectedServerId { get; init; }
+    /// <summary>The selection is the virtual "Beyaz Liste" row of that server (vless-ws forced).</summary>
+    public bool SelectedWhitelist { get; init; }
     public DateTimeOffset? ConnectedAt { get; init; }
     public string SelectionMode { get; init; } = ColituServerSelectionModes.Manual;
     public ColituVpnPreferences Preferences { get; init; } = new();
@@ -5342,6 +5827,8 @@ public sealed record ColituVpnSession
     public string? NetworkToken { get; init; }
     public string? NetworkTokenNetwork { get; init; }
     public DateTimeOffset? NetworkTokenAt { get; init; }
+    /// <summary>The physical network (<see cref="ColituNetwork.PhysicalNetworkFingerprint"/>) the token was issued on.</summary>
+    public string? NetworkTokenPlace { get; init; }
     /// <summary>Protocols blocked on <see cref="NetworkHintsNetwork"/> according to the panel.</summary>
     public List<string>? NetworkHintsBlocked { get; init; }
     /// <summary>Protocols that worked for most devices on <see cref="NetworkHintsNetwork"/>, best first (stored with the blocked ones).</summary>
@@ -5355,6 +5842,10 @@ public sealed record ColituVpnSession
     public bool? AcEngine4Remote { get; init; }
     /// <summary>AC4 whitelist check: the panel's domestic hosts per country (<c>whitelist_probe</c>).</summary>
     public Dictionary<string, List<string>>? WhitelistProbe { get; init; }
+    /// <summary>The last TLS measurement list of this account (cleared at sign-out).</summary>
+    public ColituMeasureTargets? MeasureTargets { get; init; }
+    /// <summary>Last TLS measurement run per network key.</summary>
+    public Dictionary<string, DateTimeOffset>? MeasureRuns { get; init; }
     /// <summary>Recovery set: the last fetch attempt (at most one per 6 h) and the account it was made for.</summary>
     public DateTimeOffset? RecoveryAttemptAt { get; init; }
     public string? RecoveryAttemptUser { get; init; }

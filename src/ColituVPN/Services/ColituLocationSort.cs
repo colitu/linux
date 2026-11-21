@@ -46,6 +46,54 @@ public static class ColituLocationSort
             .ToList();
     }
 
+    /// <summary>Owner rule: for clients in Russia the whitelist server ("Beyaz Liste", whitelist_ok with the vless-ws protocol) sits at the top of the list.</summary>
+    public static bool IsWhitelistServer(ColituVpnServer server) =>
+        server.WhitelistOk && server.Protocols.Any(ColituApiClient.IsWhitelistProtocol);
+
+    /// <summary>
+    /// The servers that get an extra "Beyaz Liste" row: only for a client whose last known country is RU,
+    /// each server flagged whitelist_ok that lists vless-ws. The normal row of the server stays in its
+    /// country group; other countries (and unknown) get no virtual row. Display only.
+    /// </summary>
+    /// <summary>Words that find every "Beyaz Liste" row in the search, whatever the app language.</summary>
+    public static readonly string[] WhitelistSearchWords = ["beyaz liste", "whitelist", "белый список", "白名单", "لیست سفید"];
+
+    public static List<ColituVpnServer> WhitelistRows(IEnumerable<ColituVpnServer> servers, string? clientCountry) =>
+        string.Equals(clientCountry?.Trim(), "RU", StringComparison.OrdinalIgnoreCase)
+            ? servers.Where(server => !server.IsMultihop && server.Available && IsWhitelistServer(server)).ToList()
+            : [];
+
+    /// <summary>
+    /// The panel's blocked_servers as they apply to ordinary rows and automatic choice. A whitelist row and
+    /// whitelist mode dial the relay / CDN host, never the node's own address, so there the whitelist servers
+    /// are not demoted by an address block.
+    /// </summary>
+    public static IReadOnlyCollection<string> AddressBlocked(IEnumerable<ColituVpnServer> servers, IReadOnlyCollection<string> blocked, bool whitelistMode)
+    {
+        if (blocked.Count == 0 || !whitelistMode)
+        {
+            return blocked;
+        }
+        var exempt = servers.Where(server => !server.IsMultihop && server.Available && IsWhitelistServer(server))
+            .Select(server => server.Id).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return blocked.Where(id => !exempt.Contains(id)).ToList();
+    }
+
+    /// <summary>
+    /// Ids the local reachability check (pings to the node's own address) never hides: in whitelist mode
+    /// every whitelist server, which is reached through the relay / CDN host.
+    /// </summary>
+    public static List<string?> WhitelistKeepVisible(IEnumerable<ColituVpnServer> servers, bool whitelistMode) =>
+        whitelistMode
+            ? servers.Where(server => !server.IsMultihop && IsWhitelistServer(server)).Select(server => (string?)server.Id).ToList()
+            : [];
+
+    /// <summary>Selection key of the virtual row ("whitelist:&lt;node id&gt;"), distinct from the node's normal row.</summary>
+    public static string WhitelistKey(string nodeId) => "whitelist:" + nodeId;
+
+    public static string? WhitelistNodeOf(string? key) =>
+        key != null && key.StartsWith("whitelist:", StringComparison.Ordinal) && key.Length > "whitelist:".Length ? key["whitelist:".Length..] : null;
+
     /// <summary>Servers the panel recommends come first inside their country; the rest keep their order (stable).</summary>
     internal static ColituServerGroup RecommendedFirst(ColituServerGroup group) =>
         group.IsSingle || !group.Servers.Any(server => server.Recommended)

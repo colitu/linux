@@ -67,6 +67,8 @@ jobs:
           ColituAdBlockDoh: ${{ secrets.COLITU_ADBLOCK_DOH }}
           # API mirror origins for the failover (comma-separated https origins), also a build-time secret.
           ColituMirrors: ${{ secrets.COLITU_MIRRORS }}
+          # Built-in API relays (optional build-time secret, id|host:port|sni|region|wl;...).
+          ColituRelays: ${{ secrets.COLITU_RELAYS }}
           ARCH: ${{ matrix.arch }}
         run: |
           case "$ColituAdBlockDoh" in https://*) ;; *) echo "::error::COLITU_ADBLOCK_DOH secret is missing"; exit 1 ;; esac
@@ -77,6 +79,21 @@ jobs:
       - name: SQLite for older systems
         # The NuGet library needs glibc 2.38; see scripts/build-sqlite.sh.
         run: docker run --rm -v "$PWD:/w" -w /w rockylinux/rockylinux:8 bash scripts/build-sqlite.sh publish/libe_sqlite3.so
+
+      - name: Gecko sidecar
+        # gecko-client comes from Colitu's private repository and is never built here (no
+        # secret in this public CI): it is built from the pinned commit elsewhere and
+        # published at a fixed URL. package-linux.sh then checks it against the SHA-256 in
+        # scripts/gecko-sidecar.json and stops on a missing or different file, so no
+        # package ships without it once a commit is pinned.
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          commit="$(sed -n 's/.*"commit": *"\([0-9a-f]*\)".*/\1/p' scripts/gecko-sidecar.json | head -n1)"
+          if [ -n "$commit" ]; then
+            mkdir -p "gecko-dosyalari/linux-$ARCH"
+            curl --fail --location --proto '=https' --tlsv1.2 --retry 3               -o "gecko-dosyalari/linux-$ARCH/gecko-client"               "https://colitu.com/downloads/linux/gecko/$commit/gecko-client-linux-$ARCH"
+          fi
 
       - name: Package
         env:

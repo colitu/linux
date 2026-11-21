@@ -1153,7 +1153,9 @@ public class Utils
     {
         if (Environment.GetEnvironmentVariable(Global.LocalAppData) == "1")
         {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ColituVPN");
+            // Create: on a fresh account without ~/.local/share .NET returns "" and the app would
+            // try to write to /ColituVPN and crash at start.
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "ColituVPN");
         }
 
         return GetBaseDirectory();
