@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using Process = System.Diagnostics.Process;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -62,7 +61,6 @@ public sealed class ColituUpdateService
     /// </summary>
     internal static SocketsHttpHandler CreateHandler() =>
         ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
-    private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public event Action<ColituUpdateInfo>? UpdateAvailable;
 
@@ -116,30 +114,58 @@ public sealed class ColituUpdateService
         }
     }
 
-    public async Task<ColituUpdateInfo?> CheckForUpdateAsync(bool ignoreAttemptCache = false)
+    /// <summary>When automatic checks run: start, every 6 hours, after a connection; 15 minutes back-off after a failure.</summary>
+    public ColituUpdateSchedule Schedule { get; } = new();
+
+    /// <summary>True when the last check found no source with a valid signed manifest (or failed otherwise).</summary>
+    public bool LastCheckFailed { get; private set; }
+
+    private readonly object _checkGate = new();
+    private Task<ColituUpdateInfo?>? _checkInFlight;
+
+    /// <summary>Path of the manifest on every host that serves /downloads/ (colitu.com, api host, mirrors, relays).</summary>
+    internal const string ManifestPath = "/downloads/linux/latest.json";
+
+    /// <summary>One manifest source may take this long before the next one is tried.</summary>
+    private static readonly TimeSpan ManifestSourceTimeout = TimeSpan.FromSeconds(12);
+
+    /// <summary>
+    /// Checks the signed release manifest. Only one check runs at a time: a call while one is running
+    /// gets that check's result. Automatic triggers obey <see cref="Schedule"/> (null without a check
+    /// when it is not due); <see cref="ColituUpdateTrigger.Manual"/> always runs.
+    /// </summary>
+    public Task<ColituUpdateInfo?> CheckForUpdateAsync(bool ignoreAttemptCache = false, ColituUpdateTrigger trigger = ColituUpdateTrigger.Manual)
     {
+        lock (_checkGate)
+        {
+            if (_checkInFlight is { IsCompleted: false } running)
+            {
+                return running;
+            }
+            if (!Schedule.TryBegin(DateTimeOffset.UtcNow, trigger))
+            {
+                return Task.FromResult<ColituUpdateInfo?>(null);
+            }
+            _checkInFlight = RunCheckAsync(ignoreAttemptCache, trigger);
+            return _checkInFlight;
+        }
+    }
+
+    private async Task<ColituUpdateInfo?> RunCheckAsync(bool ignoreAttemptCache, ColituUpdateTrigger trigger)
+    {
+        LastCheckFailed = true;
         try
         {
+            await Task.Yield();
             ClearCompletedAttempt();
-            using var response = await SendCheckedAsync(_httpClient, new Uri(ManifestUrl), request =>
+            var sources = ManifestSources(ManifestUrl, ColituEndpointList.Instance.Bases());
+            var payload = await FetchManifestAsync(sources, FetchManifestTextAsync, text => AcceptManifest(text, DateTimeOffset.UtcNow), CancellationToken.None);
+            if (payload == null)
             {
-                request.Headers.TryAddWithoutValidation("X-Client-Platform", ColituAuthService.ClientPlatform);
-                request.Headers.TryAddWithoutValidation("X-App-Version", LocalVersionName);
-                request.Headers.TryAddWithoutValidation("User-Agent", $"ColituVPN/{LocalVersionName} Linux");
-            }, HttpCompletionOption.ResponseContentRead, CancellationToken.None);
-            if (!response.IsSuccessStatusCode) return null;
-            var payload = await response.Content.ReadFromJsonAsync<ColituLinuxVersionPayload>(_jsonOptions);
-            if (payload == null) return null;
-            if (!ColituUpdateSignature.VerifyV2(payload))
-            {
-                Logging.SaveLog("ColituUpdateService: release manifest signature_v2 is missing or invalid; update ignored");
+                Logging.SaveLog($"ColituUpdateService: update check ({trigger}) failed on all {sources.Count} manifest sources; next automatic try in {ColituUpdateSchedule.FailureBackoff.TotalMinutes:0} min");
                 return null;
             }
-            if (!ColituUpdateSignature.IsFresh(payload, DateTimeOffset.UtcNow, out var staleReason))
-            {
-                Logging.SaveLog($"ColituUpdateService: release manifest rejected ({staleReason}); no update offered");
-                return null;
-            }
+            LastCheckFailed = false;
 
             var remoteCode = payload.LatestVersionCode;
             var remoteName = payload.VersionName ?? remoteCode.ToString(CultureInfo.InvariantCulture);
@@ -169,36 +195,187 @@ public sealed class ColituUpdateService
             {
                 ValidateDownloadUrl(info.DownloadUrl);
             }
+            Logging.SaveLog($"ColituUpdateService: {remoteName} available (force={(info.Force ? "yes" : "no")}, trigger={trigger})");
             UpdateAvailable?.Invoke(info);
             return info;
         }
         catch (Exception ex)
         {
-            Logging.SaveLog("ColituUpdateService.CheckForUpdateAsync", ex);
+            LastCheckFailed = true;
+            // Quiet checks too: a failure that is never written down looks like "no update" forever.
+            // Only the type: an exception message may carry a mirror or relay address.
+            Logging.SaveLog($"ColituUpdateService: update check ({trigger}) failed ({ex.GetType().Name})");
             return null;
         }
+        finally
+        {
+            Schedule.Finish(DateTimeOffset.UtcNow, LastCheckFailed);
+        }
+    }
+
+    /// <summary>
+    /// Where the manifest is read from, in order: the website, then every API base the app knows
+    /// (the one that last worked first; the origin's /downloads/), then the API relays
+    /// (<c>relay:&lt;id&gt;</c> + path). Every source serves the same signed file; none is trusted more.
+    /// </summary>
+    internal static IReadOnlyList<string> ManifestSources(string primary, IEnumerable<string> bases, string path = ManifestPath)
+    {
+        var result = new List<string> { primary };
+        foreach (var item in bases)
+        {
+            var source = ColituApiRelays.IsRelay(item)
+                ? item.Trim().TrimEnd('/') + path
+                : Uri.TryCreate(item, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
+                    ? uri.GetLeftPart(UriPartial.Authority) + path
+                    : null;
+            if (source != null && !result.Contains(source, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(source);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Tries <paramref name="sources"/> in order and returns the first manifest that
+    /// <paramref name="accept"/> takes (signature_v2 and freshness). A failing source, an unsigned
+    /// or a tampered manifest moves on to the next source; it is never used. Null when none passed.
+    /// </summary>
+    internal static async Task<ColituLinuxVersionPayload?> FetchManifestAsync(
+        IReadOnlyList<string> sources,
+        Func<string, CancellationToken, Task<string?>> fetch,
+        Func<string, ColituLinuxVersionPayload?> accept,
+        CancellationToken token)
+    {
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var source = sources[index];
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+                limit.CancelAfter(ManifestSourceTimeout);
+                var text = await fetch(source, limit.Token);
+                if (text == null)
+                {
+                    LogSource(source, "no manifest");
+                    continue;
+                }
+                if (accept(text) is { } payload)
+                {
+                    if (index > 0)
+                    {
+                        LogSource(source, "manifest taken from a fallback source");
+                    }
+                    return payload;
+                }
+                LogSource(source, "manifest rejected");
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LogSource(source, ex.GetType().Name);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The manifest when it parses, its signature_v2 verifies with the Linux release key and it is
+    /// fresh; null otherwise (logged). <paramref name="publicKeyPem"/> is for tests; null takes the built-in key.
+    /// </summary>
+    internal static ColituLinuxVersionPayload? AcceptManifest(string text, DateTimeOffset now, string? publicKeyPem = null)
+    {
+        ColituLinuxVersionPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<ColituLinuxVersionPayload>(text, ManifestJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        if (payload == null)
+        {
+            return null;
+        }
+        var signed = publicKeyPem == null ? ColituUpdateSignature.VerifyV2(payload) : ColituUpdateSignature.VerifyV2(payload, publicKeyPem);
+        if (!signed)
+        {
+            LogRedirect("ColituUpdateService: release manifest signature_v2 is missing or invalid; update ignored");
+            return null;
+        }
+        if (!ColituUpdateSignature.IsFresh(payload, now, out var staleReason))
+        {
+            LogRedirect($"ColituUpdateService: release manifest rejected ({staleReason}); no update offered");
+            return null;
+        }
+        return payload;
+    }
+
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>The manifest text of one source (a URL, or <c>relay:&lt;id&gt;/path</c>); null on an HTTP error.</summary>
+    private async Task<string?> FetchManifestTextAsync(string source, CancellationToken token)
+    {
+        void Prepare(HttpRequestMessage request)
+        {
+            request.Headers.TryAddWithoutValidation("X-Client-Platform", ColituAuthService.ClientPlatform);
+            request.Headers.TryAddWithoutValidation("X-App-Version", LocalVersionName);
+            request.Headers.TryAddWithoutValidation("User-Agent", $"ColituVPN/{LocalVersionName} Linux");
+        }
+
+        if (ColituApiRelays.IsRelay(source))
+        {
+            var slash = source.IndexOf('/');
+            if (slash < 0 || ColituEndpointList.Instance.Relay(source[..slash]) is not { } relay)
+            {
+                return null;
+            }
+            using var request = new HttpRequestMessage(HttpMethod.Get, ColituApiRelays.RelayUri(source[slash..]));
+            Prepare(request);
+            using var viaRelay = await ColituApiRelays.ClientFor(relay).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            return viaRelay.IsSuccessStatusCode ? await ReadLimitedAsync(viaRelay.Content, MaxManifestBytes, token) : null;
+        }
+        using var response = await SendCheckedAsync(_httpClient, new Uri(source), Prepare, HttpCompletionOption.ResponseContentRead, token);
+        return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(token) : null;
+    }
+
+    /// <summary>The body as text, refused when it is larger than <paramref name="limit"/> bytes (the header is not trusted).</summary>
+    private static async Task<string> ReadLimitedAsync(HttpContent content, int limit, CancellationToken token)
+    {
+        if (content.Headers.ContentLength > limit)
+        {
+            throw new InvalidOperationException("Release manifest is too large.");
+        }
+        await using var stream = await content.ReadAsStreamAsync(token);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, token)) > 0)
+        {
+            if (buffer.Length + read > limit)
+            {
+                throw new InvalidOperationException("Release manifest is too large.");
+            }
+            buffer.Write(chunk, 0, read);
+        }
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+    }
+
+    /// <summary>A source for the log: relay id, or a masked URL (no mirror or relay address).</summary>
+    private static void LogSource(string source, string what)
+    {
+        var name = ColituApiRelays.IsRelay(source)
+            ? source.Split('/')[0]
+            : Uri.TryCreate(source, UriKind.Absolute, out var uri) ? MaskForLog(uri) : "?";
+        LogRedirect($"ColituUpdateService: manifest source {name}: {what}");
     }
 
     public async Task DownloadUpdateAsync(ColituUpdateInfo info, IProgress<ColituDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
-    {
-        const int maxAttempts = 3;
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await DownloadUpdateOnceAsync(info, progress, cancellationToken);
-                return;
-            }
-            catch (Exception ex) when (attempt < maxAttempts
-                && !cancellationToken.IsCancellationRequested
-                && ex is HttpRequestException or IOException or TaskCanceledException)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken);
-            }
-        }
-    }
-
-    private async Task DownloadUpdateOnceAsync(ColituUpdateInfo info, IProgress<ColituDownloadProgress>? progress, CancellationToken cancellationToken)
     {
         if (!info.CanInstall)
         {
@@ -209,13 +386,53 @@ public sealed class ColituUpdateService
         {
             throw new InvalidOperationException("The release manifest does not carry a valid SHA256 for the update.");
         }
+        var sources = DownloadSources(info.DownloadUrl, ColituEndpointList.Instance.Bases());
+        for (var attempt = 0; ; attempt++)
+        {
+            var source = sources[attempt];
+            try
+            {
+                await DownloadUpdateOnceAsync(info, source, progress, cancellationToken);
+                return;
+            }
+            catch (Exception ex) when (attempt + 1 < sources.Count
+                && !cancellationToken.IsCancellationRequested
+                && ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
+            {
+                // The package is checked against the signed manifest's SHA256 whatever source it came from.
+                LogSource(source, $"download failed ({ex.GetType().Name}); trying the next source");
+                await Task.Delay(TimeSpan.FromSeconds(2 * Math.Min(attempt + 1, 3)), cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Where the package (.deb or .rpm, whichever the signed manifest gave) is downloaded from, in
+    /// order: the signed URL twice (a retry), then the same path on every API base the app knows and
+    /// through every relay (as <see cref="ManifestSources"/>), then the signed URL once more. Every
+    /// copy must match the manifest's SHA256 before it is kept.
+    /// </summary>
+    internal static IReadOnlyList<string> DownloadSources(string downloadUrl, IEnumerable<string> bases)
+    {
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri))
+        {
+            return [downloadUrl];
+        }
+        var others = ManifestSources(downloadUrl, bases, uri.AbsolutePath).Skip(1).ToList();
+        return others.Count == 0
+            ? [downloadUrl, downloadUrl, downloadUrl]
+            : [downloadUrl, downloadUrl, .. others, downloadUrl];
+    }
+
+    private async Task DownloadUpdateOnceAsync(ColituUpdateInfo info, string source, IProgress<ColituDownloadProgress>? progress, CancellationToken cancellationToken)
+    {
         var updateDir = ColituHardening.CreateProtectedDirectory(Path.Combine(Utils.StartupPath(), UpdateFolderName));
         var destPath = Path.Combine(updateDir, $"colitu-vpn-{info.VersionCode}.{info.PackageKind}");
 
         try
         {
-            await DownloadToAsync(info, destPath, progress, cancellationToken);
-            VerifySha256(destPath, info.Sha256);
+            await DownloadToAsync(source, destPath, progress, cancellationToken);
+            VerifySha256(destPath, info.Sha256!);
         }
         catch
         {
@@ -226,9 +443,13 @@ public sealed class ColituUpdateService
         info.LocalPath = destPath;
     }
 
-    private async Task DownloadToAsync(ColituUpdateInfo info, string destPath, IProgress<ColituDownloadProgress>? progress, CancellationToken cancellationToken)
+    private async Task DownloadToAsync(string source, string destPath, IProgress<ColituDownloadProgress>? progress, CancellationToken cancellationToken)
     {
-        using var response = await SendCheckedAsync(_downloadClient, new Uri(info.DownloadUrl), null, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        // The relay clients have no timeout of their own: the download client's limit applies to every source.
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(_downloadClient.Timeout);
+        cancellationToken = limit.Token;
+        using var response = await SendDownloadAsync(source, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var total = response.Content.Headers.ContentLength ?? -1;
@@ -236,13 +457,13 @@ public sealed class ColituUpdateService
         {
             throw new InvalidOperationException("The update package is too large.");
         }
-        await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+        await using (var body = await response.Content.ReadAsStreamAsync(cancellationToken))
         await using (var dest = File.Create(destPath))
         {
             var buffer = new byte[65536];
             long downloaded = 0;
             int read;
-            while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            while ((read = await body.ReadAsync(buffer, cancellationToken)) > 0)
             {
                 downloaded += read;
                 if (downloaded > MaxPackageBytes)
@@ -262,6 +483,23 @@ public sealed class ColituUpdateService
                 }
             }
         }
+    }
+
+    /// <summary>GET of one package source: a URL (redirects checked) or <c>relay:&lt;id&gt;/path</c>.</summary>
+    private async Task<HttpResponseMessage> SendDownloadAsync(string source, CancellationToken cancellationToken)
+    {
+        if (!ColituApiRelays.IsRelay(source))
+        {
+            return await SendCheckedAsync(_downloadClient, new Uri(source), null, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        var slash = source.IndexOf('/');
+        var relay = slash > 0 ? ColituEndpointList.Instance.Relay(source[..slash]) : null;
+        if (relay == null)
+        {
+            throw new HttpRequestException(HttpRequestError.ConnectionError, "unknown relay");
+        }
+        using var request = new HttpRequestMessage(HttpMethod.Get, ColituApiRelays.RelayUri(source[slash..]));
+        return await ColituApiRelays.ClientFor(relay).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 
     /// <summary>
@@ -748,4 +986,95 @@ public sealed class ColituUpdateState
     public string DownloadUrl { get; set; } = "";
     public string? Sha256 { get; set; }
     public DateTimeOffset AttemptedAt { get; set; }
+}
+
+/// <summary>What started an update check.</summary>
+public enum ColituUpdateTrigger
+{
+    /// <summary>The user pressed "Check for updates": always runs.</summary>
+    Manual,
+    /// <summary>App start: always runs.</summary>
+    Startup,
+    /// <summary>The periodic timer: every <see cref="ColituUpdateSchedule.Interval"/>, or after the back-off when the last check failed.</summary>
+    Periodic,
+    /// <summary>~30 s after a connection came up (the tunnel or the relays may reach what the direct path did not).</summary>
+    AfterConnect
+}
+
+/// <summary>
+/// When automatic update checks may run. Linux (like Windows) used to check once at start only,
+/// straight to colitu.com; from Russia that failed silently and a forced release never reached those
+/// users. One check at a time; after a failed check automatic triggers wait <see cref="FailureBackoff"/>;
+/// after a good one the periodic timer waits <see cref="Interval"/> and a connection triggers a check
+/// only when the last good one is older than <see cref="AfterConnectMinGap"/> (no check per reconnect).
+/// </summary>
+public sealed class ColituUpdateSchedule
+{
+    public static readonly TimeSpan Interval = TimeSpan.FromHours(6);
+    public static readonly TimeSpan AfterConnectDelay = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan FailureBackoff = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan AfterConnectMinGap = TimeSpan.FromMinutes(30);
+
+    private readonly object _gate = new();
+    private bool _running;
+    private DateTimeOffset? _lastFinished;
+    private bool _lastFailed;
+
+    public bool Running
+    {
+        get { lock (_gate) return _running; }
+    }
+
+    /// <summary>True when an automatic check of this kind would run at <paramref name="now"/> (no state change).</summary>
+    public bool IsDue(DateTimeOffset now, ColituUpdateTrigger trigger)
+    {
+        lock (_gate)
+        {
+            return !_running && DueLocked(now, trigger);
+        }
+    }
+
+    /// <summary>Claims the single check slot when <paramref name="trigger"/> may run now.</summary>
+    public bool TryBegin(DateTimeOffset now, ColituUpdateTrigger trigger)
+    {
+        lock (_gate)
+        {
+            if (_running || !DueLocked(now, trigger))
+            {
+                return false;
+            }
+            _running = true;
+            return true;
+        }
+    }
+
+    /// <summary>Releases the slot; <paramref name="failed"/> starts the back-off.</summary>
+    public void Finish(DateTimeOffset now, bool failed)
+    {
+        lock (_gate)
+        {
+            _running = false;
+            _lastFinished = now;
+            _lastFailed = failed;
+        }
+    }
+
+    private bool DueLocked(DateTimeOffset now, ColituUpdateTrigger trigger)
+    {
+        if (trigger is ColituUpdateTrigger.Manual or ColituUpdateTrigger.Startup)
+        {
+            return true;
+        }
+        if (_lastFinished is not { } last)
+        {
+            // Nothing finished yet (the start check is still due or running): the timer may start one.
+            return true;
+        }
+        var since = now - last;
+        if (_lastFailed)
+        {
+            return since >= FailureBackoff;
+        }
+        return trigger == ColituUpdateTrigger.AfterConnect ? since >= AfterConnectMinGap : since >= Interval;
+    }
 }

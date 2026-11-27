@@ -21,6 +21,8 @@ public partial class ColituMainWindow : Window
     private readonly DispatcherTimer _clock;
     private readonly DispatcherTimer _refresh;
     private readonly DispatcherTimer _toastTimer;
+    /// <summary>Every minute: runs the periodic update check when <see cref="ColituUpdateSchedule"/> says it is due.</summary>
+    private readonly DispatcherTimer _updateTimer;
     private TrayIcon? _trayIcon;
     private NativeMenuItem? _trayConnectItem;
     private bool _exiting;
@@ -46,6 +48,9 @@ public partial class ColituMainWindow : Window
         });
         _auth.SessionExpired += _ => Dispatcher.UIThread.Post(async () => await GuardAsync("SessionExpired", OnSessionExpiredAsync));
         _updater.UpdateAvailable += info => Dispatcher.UIThread.Post(() => ShowUpdate(info));
+        _vpn.StatusChanged += status => Dispatcher.UIThread.Post(() => OnStatusForUpdates(status));
+        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _updateTimer.Tick += (_, _) => OnUpdateTimerTick();
 
         _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _clock.Tick += (_, _) => UpdateSessionTimer();
@@ -103,7 +108,9 @@ public partial class ColituMainWindow : Window
     private async Task StartAsync()
     {
         ShowView(LoadingView);
-        _ = CheckForUpdatesAsync(quiet: true);
+        _ = CheckForUpdatesAsync(quiet: true, ColituUpdateTrigger.Startup);
+        // Not only at start: every 6 hours, 15 minutes after a failed check, and after a connection.
+        _updateTimer.Start();
         await _vpn.RecoverFromPreviousRunAsync();
         await RestoreSessionAsync();
         ApplyDevicePause();

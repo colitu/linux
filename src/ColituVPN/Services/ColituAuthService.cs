@@ -1111,6 +1111,17 @@ public sealed class ColituAuthService
         }
     }
 
+    /// <summary>
+    /// True only in debug builds: release builds ignore both COLITU_API_BASE_URL and
+    /// colitu-api.json, so nothing local can point the password and tokens elsewhere.
+    /// </summary>
+    internal static bool ApiBaseOverridesEnabled =>
+#if DEBUG
+        true;
+#else
+        false;
+#endif
+
     /// <summary>The developer/staging override of the API base, null in normal use.</summary>
     private static string? ResolveApiBaseOverride()
     {
@@ -1119,7 +1130,6 @@ public sealed class ColituAuthService
         // variable could otherwise send the password and tokens to any server.
         var env = Environment.GetEnvironmentVariable("COLITU_API_BASE_URL");
         if (!string.IsNullOrWhiteSpace(env)) return env.Trim().TrimEnd('/');
-#endif
 
         // guiConfigs belongs to the user and is not readable by others (ColituHardening).
         var configPath = Utils.GetConfigPath("colitu-api.json");
@@ -1139,6 +1149,7 @@ public sealed class ColituAuthService
                 // Fall through to the production API.
             }
         }
+#endif
 
         return null;
     }

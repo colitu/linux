@@ -184,6 +184,37 @@ public class ColituSecurityTests
     }
 
     [Fact]
+    public void ApiBaseOverrides_OnlyInDebugBuilds()
+    {
+#if DEBUG
+        ColituAuthService.ApiBaseOverridesEnabled.Should().BeTrue();
+#else
+        ColituAuthService.ApiBaseOverridesEnabled.Should().BeFalse();
+#endif
+    }
+
+    [Fact]
+    public void ApiConfigFile_IsReadOnlyInsideDebugBlock()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "ColituVPN", "Services")))
+        {
+            dir = dir.Parent;
+        }
+        var source = File.ReadAllText(Path.Combine(dir!.FullName, "ColituVPN", "Services", "ColituAuthService.cs"));
+        var start = source.IndexOf("private static string? ResolveApiBaseOverride()", StringComparison.Ordinal);
+        start.Should().BeGreaterThan(0);
+        var body = source[start..source.IndexOf("internal static bool IsAllowedApiBaseUrl", start, StringComparison.Ordinal)];
+        var debugStart = body.IndexOf("#if DEBUG", StringComparison.Ordinal);
+        var debugEnd = body.IndexOf("#endif", StringComparison.Ordinal);
+        var file = body.IndexOf("colitu-api.json", StringComparison.Ordinal);
+        var env = body.IndexOf("COLITU_API_BASE_URL", StringComparison.Ordinal);
+        debugStart.Should().BeGreaterThan(0);
+        file.Should().BeGreaterThan(debugStart).And.BeLessThan(debugEnd);
+        env.Should().BeGreaterThan(debugStart).And.BeLessThan(debugEnd);
+    }
+
+    [Fact]
     public void Secrets_RoundTripAndAreNotPlainText()
     {
         const string token = "eyJhbGciOiJIUzI1NiJ9.refresh-token-value";
