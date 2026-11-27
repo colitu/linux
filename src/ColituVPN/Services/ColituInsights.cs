@@ -170,6 +170,12 @@ public sealed class ColituInsights
     /// </summary>
     public bool TlsProbeEvents { get; set; }
 
+    /// <summary>
+    /// The last GET /servers had <c>features.fp_events</c>: the panel accepts the <c>fingerprint</c> of connect events
+    /// (FP-SPEC §6). Without it the field is left out (the event itself stays), or an older panel refuses the report.
+    /// </summary>
+    public bool FingerprintEvents { get; set; }
+
     public ColituInsights(Func<string> path, Func<long>? ticks = null, Func<bool>? existingInstall = null)
     {
         _path = path;
@@ -468,6 +474,10 @@ public sealed class ColituInsights
             {
                 return;
             }
+            if (!FingerprintEvents)
+            {
+                item.Fingerprint = null;
+            }
             if (item.Kind == "probe")
             {
                 var hour = stamp.ToUnixTimeSeconds() / 3600;
@@ -512,6 +522,15 @@ public sealed class ColituInsights
                 {
                     return null;
                 }
+            }
+            if (!FingerprintEvents && state.Events.Any(item => item.Fingerprint != null))
+            {
+                // Queued while the panel accepted the field: the events go, the field does not.
+                foreach (var item in state.Events)
+                {
+                    item.Fingerprint = null;
+                }
+                Save();
             }
             return ComposeEvents(state, appVersion, networkToken, networkType);
         }

@@ -56,7 +56,9 @@ public sealed class ColituApiClient
             AcEngine4 = ColituLmPlanner.ParseFeature(response.Features),
             WhitelistProbe = ColituWhitelist.ParseProbe(response.WhitelistProbe),
             MeasureTargets = ColituIpBlock.Parse(response.MeasureTargets),
-            TlsProbeEvents = ColituIpBlock.ParseEventsFeature(response.Features)
+            TlsProbeEvents = ColituIpBlock.ParseEventsFeature(response.Features),
+            FingerprintPolicy = ColituFingerprint.ParsePolicy(response.FingerprintPolicy),
+            FingerprintEvents = ColituFingerprint.ParseEventsFeature(response.Features)
         };
     }
 
@@ -1250,6 +1252,8 @@ internal sealed class ColituServerListDto
     [JsonPropertyName("whitelist_probe")] public System.Text.Json.JsonElement? WhitelistProbe { get; set; }
     /// <summary>TLS measurement targets (RU only, when configured; kept raw: a bad value never fails the list).</summary>
     [JsonPropertyName("measure_targets")] public System.Text.Json.JsonElement? MeasureTargets { get; set; }
+    /// <summary>FP-SPEC §2: try order, blocked names and spread of the uTLS fingerprint; absent on an old panel.</summary>
+    [JsonPropertyName("fingerprint_policy")] public System.Text.Json.JsonElement? FingerprintPolicy { get; set; }
 }
 
 internal sealed class ColituNetworkHintsDto

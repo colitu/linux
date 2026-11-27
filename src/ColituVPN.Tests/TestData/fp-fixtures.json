@@ -1,0 +1,307 @@
+{
+ "spec": "F:/DEV/wt/FP-SPEC.md (colitu-panel docs/fp-fixtures.json canonical). choose: section 4; hash fnv1a32(device_id|network_key). retry: section 5.",
+ "version": 1,
+ "fnv1a32": [
+  {
+   "input": "dev-a|RU-AS8359",
+   "hash": 2726620905
+  },
+  {
+   "input": "dev-b|RU-AS8359",
+   "hash": 2036852408
+  },
+  {
+   "input": "",
+   "hash": 2166136261
+  },
+  {
+   "input": "a",
+   "hash": 3826002220
+  }
+ ],
+ "choose": [
+  {
+   "name": "fresh device spreads",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {},
+   "expect": "chrome"
+  },
+  {
+   "name": "other device",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-b",
+   "network": "RU-AS8359",
+   "state": {},
+   "expect": "safari"
+  },
+  {
+   "name": "third device",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-c",
+   "network": "RU-AS12389",
+   "state": {},
+   "expect": "chrome"
+  },
+  {
+   "name": "sticky success",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {
+    "safari": {
+     "ok": true
+    }
+   },
+   "expect": "safari"
+  },
+  {
+   "name": "sticky ignored when blocked by panel",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox",
+     "safari"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {
+    "safari": {
+     "ok": true
+    }
+   },
+   "expect": "chrome"
+  },
+  {
+   "name": "locally failed skipped",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {
+    "chrome": {
+     "failed": true
+    },
+    "edge": {
+     "failed": true
+    }
+   },
+   "expect": "safari"
+  },
+  {
+   "name": "all failed starts over",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge"
+    ],
+    "blocked": [],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {
+    "chrome": {
+     "failed": true
+    },
+    "edge": {
+     "failed": true
+    }
+   },
+   "expect": "edge"
+  },
+  {
+   "name": "spread 1 = first working",
+   "policy": {
+    "order": [
+     "chrome",
+     "edge",
+     "safari",
+     "ios",
+     "android",
+     "firefox"
+    ],
+    "blocked": [
+     "firefox"
+    ],
+    "spread": 1
+   },
+   "device_id": "dev-b",
+   "network": "RU-AS8359",
+   "state": {
+    "chrome": {
+     "failed": true
+    }
+   },
+   "expect": "edge"
+  },
+  {
+   "name": "unknown names ignored",
+   "policy": {
+    "order": [
+     "opera",
+     "chrome",
+     "edge"
+    ],
+    "blocked": [],
+    "spread": 2
+   },
+   "device_id": "dev-c",
+   "network": "TR-AS9121",
+   "state": {},
+   "expect": "chrome"
+  },
+  {
+   "name": "empty order",
+   "policy": {
+    "order": [],
+    "blocked": [],
+    "spread": 3
+   },
+   "device_id": "dev-a",
+   "network": "RU-AS8359",
+   "state": {},
+   "expect": ""
+  }
+ ],
+ "retry": [
+  {
+   "name": "tcp ok, probe ok, tls transport failed -> retry",
+   "transport": "vless-reality",
+   "tcp_ok": true,
+   "probe": "ok",
+   "retries_used": 0,
+   "expect_retry": true
+  },
+  {
+   "name": "tcp ok, no probe data -> retry",
+   "transport": "vless-xhttp",
+   "tcp_ok": true,
+   "probe": null,
+   "retries_used": 0,
+   "expect_retry": true
+  },
+  {
+   "name": "ip blocked never retried",
+   "transport": "vless-reality",
+   "tcp_ok": true,
+   "probe": "tls_rst",
+   "retries_used": 0,
+   "expect_retry": false
+  },
+  {
+   "name": "tcp down never retried",
+   "transport": "trojan",
+   "tcp_ok": false,
+   "probe": null,
+   "retries_used": 0,
+   "expect_retry": false
+  },
+  {
+   "name": "budget of 2 used",
+   "transport": "vless-reality",
+   "tcp_ok": true,
+   "probe": "ok",
+   "retries_used": 2,
+   "expect_retry": false
+  },
+  {
+   "name": "hysteria2 takes no fingerprint",
+   "transport": "hysteria2",
+   "tcp_ok": true,
+   "probe": "ok",
+   "retries_used": 0,
+   "expect_retry": false
+  },
+  {
+   "name": "shadowsocks takes no fingerprint",
+   "transport": "shadowsocks",
+   "tcp_ok": true,
+   "probe": null,
+   "retries_used": 0,
+   "expect_retry": false
+  },
+  {
+   "name": "vless-ws retried",
+   "transport": "vless-ws",
+   "tcp_ok": true,
+   "probe": "ok",
+   "retries_used": 1,
+   "expect_retry": true
+  }
+ ]
+}

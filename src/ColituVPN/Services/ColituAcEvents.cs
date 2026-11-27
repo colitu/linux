@@ -39,6 +39,8 @@ public sealed class ColituAcEvent
     [JsonPropertyName("port"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? Port { get; set; }
     /// <summary>probe (tls): true for a measurement run (panel targets), false for the ip_blocked classifier.</summary>
     [JsonPropertyName("measure"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Measure { get; set; }
+    /// <summary>connect of a TLS transport: the uTLS fingerprint it used (FP-SPEC §6). Only sent while the panel sets features.fp_events.</summary>
+    [JsonPropertyName("fingerprint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Fingerprint { get; set; }
 
     /// <summary>When the event was queued (not sent): decides which probe of an hour is the last one.</summary>
     [JsonIgnore] public DateTimeOffset Stamp { get; set; }
@@ -120,6 +122,7 @@ public static class ColituAcSpec
                 result.FirstTry = source.FirstTry ?? false;
                 result.Mode = ModeName(source.Mode);
                 result.Engine = result.Mode == "auto" ? EngineName(source.Engine) : null;
+                result.Fingerprint = ColituFingerprint.TakesFingerprint(result.Protocol) ? ColituFingerprint.Name(source.Fingerprint) : null;
                 return result;
             case "recovery":
                 if (node == null || outcome == null)

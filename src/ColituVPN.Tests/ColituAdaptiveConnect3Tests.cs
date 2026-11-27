@@ -51,6 +51,18 @@ public class ColituAdaptiveConnect3Tests
     }
 
     [Fact]
+    public void HintedStart_WithValueTuples_NeverAddsAnEmptyItemForAProtocolTheServerLacks()
+    {
+        // The connect path passes (Candidate, Profile) tuples; Beyaz Liste offers one protocol only.
+        (string Protocol, int N)[] offered = [("vless-reality-relay", 1)];
+        var got = ColituNetworkHintsPolicy.HintedStart(offered, item => item.Protocol, ["hysteria2", "vless-reality-relay", "trojan"],
+            _ => false, null, rest => rest);
+        got.Should().Equal(("vless-reality-relay", 1));
+        ColituNetworkHintsPolicy.HintedStart(offered, item => item.Protocol, ["hysteria2", "trojan"], _ => false, null, rest => rest)
+            .Should().BeNull();
+    }
+
+    [Fact]
     public void HintedStart_SkipsStalledAndNotOfferedPreferred()
     {
         Start(["trojan", "wireguard", "vless-reality"], null, "trojan").Should().Equal("vless-reality", "hysteria2", "vless-xhttp", "shadowsocks", "trojan");

@@ -152,6 +152,18 @@ public sealed partial class ColituVpnService
     /// <summary>The node and transport the current connect attempt is on (for a failed connect's event).</summary>
     private string? _attemptNodeId;
     private string? _attemptProtocol;
+    /// <summary>uTLS fingerprint of the transport being tried (FP-SPEC); null for a transport without one.</summary>
+    private string? _attemptFingerprint;
+    /// <summary>The transport that carried traffic and its fingerprint, for the connect event.</summary>
+    private (string Protocol, string? Fingerprint)? _activeFingerprint;
+    private bool _attemptAutomatic;
+    /// <summary>Learned uTLS fingerprint per network (FP-SPEC §3), kept in the app state.</summary>
+    private readonly ColituFpMemory _fpMemory = new();
+    /// <summary>Fingerprint retries of this connect, all servers together (FP-SPEC §5: at most 2).</summary>
+    private int _fpRetriesThisConnect;
+    /// <summary>This round's TLS probe results (FP-SPEC §5 asks them whether a failure is the uTLS hello).</summary>
+    private List<ColituTlsResult> _roundTls = [];
+    private string? _fpDeviceId;
     /// <summary>What ordered the server of the current automatic connect: "ac4", "ac3" or "panel"; null for a manual connect.</summary>
     private string? _attemptEngine;
     /// <summary>The connect needed another server or transport than the first one tried (first_try = false).</summary>
@@ -1049,6 +1061,17 @@ public sealed partial class ColituVpnService
         }
         // TLS probe events only while the last list said the panel takes their fields (an older panel refuses the whole report).
         ColituInsights.Instance.TlsProbeEvents = servers.TlsProbeEvents;
+        ColituInsights.Instance.FingerprintEvents = servers.FingerprintEvents;
+        if (servers.FingerprintPolicy == null)
+        {
+            // An old panel: the endpoint's own fingerprint, as before.
+            session = session with { FingerprintPolicy = null };
+        }
+        else if (place.Network.IsNotEmpty() || _session.FingerprintPolicy == null)
+        {
+            // Through the tunnel the panel sees a foreign network: the policy of this network stays.
+            session = session with { FingerprintPolicy = servers.FingerprintPolicy };
+        }
         if (place.Network.IsNotEmpty() || servers.MeasureTargets != null)
         {
             // Fetched with the VPN off the list is the truth (absent = nothing to measure); through the tunnel the
@@ -1336,6 +1359,9 @@ public sealed partial class ColituVpnService
         _pendingSpare = null;
         ResetSpareSwapDeferral();
         _failedThisConnect.Clear();
+        _fpRetriesThisConnect = 0;
+        _activeFingerprint = null;
+        _attemptFingerprint = null;
         ResetGeckoForConnect();
         _lmLead = null;
         _apiUnreachable = false;
@@ -1348,6 +1374,7 @@ public sealed partial class ColituVpnService
         // "Best server": this app ranks the servers itself and moves on to the next one when one
         // carries no traffic on this network. A server the user picked is never switched.
         var automatic = server == null;
+        _attemptAutomatic = automatic;
         var connectWatch = Stopwatch.StartNew();
         _connectFallback = false;
         _attemptNodeId = NodeIdOf(server);
@@ -1827,7 +1854,8 @@ public sealed partial class ColituVpnService
             }
         }
         var items = config.Candidates
-            .Select(candidate => (candidate.Protocol, Item: FmtHandler.ResolveConfig(candidate.ShareLink, out _)))
+            .Select(candidate => (candidate.Protocol, Item: FmtHandler.ResolveConfig(
+                ColituFingerprint.WithFingerprint(candidate.ShareLink, candidate.Protocol, ChosenFingerprint()), out _)))
             .Where(item => item.Item != null && item.Protocol.IsNotEmpty())
             // The import defaults (TLS for Hysteria2/TUIC): without them sing-box would not start at all.
             .Select(item => (item.Protocol, Item: ColituWarmSpare.NormalizeSpareProfile(item.Item!)))
@@ -3724,7 +3752,11 @@ public sealed partial class ColituVpnService
             Ms = ColituAcSpec.ClampMs(ms),
             FirstTry = success && !_connectFallback,
             Mode = automatic ? "auto" : "manual",
-            Engine = automatic ? _attemptEngine : null
+            Engine = automatic ? _attemptEngine : null,
+            // Dropped by the queue unless the panel set features.fp_events.
+            Fingerprint = success
+                ? (_activeFingerprint is { } active && string.Equals(active.Protocol, _activeTransport, StringComparison.OrdinalIgnoreCase) ? active.Fingerprint : null)
+                : _attemptFingerprint
         });
     }
 
@@ -3990,7 +4022,14 @@ public sealed partial class ColituVpnService
         {
             throw new InvalidOperationException("Server config could not be imported.");
         }
-        var imported = await ConfigHandler.AddBatchServers(_config, config.RawConfig, ColituSubId, true);
+        var rawConfig = config.RawConfig;
+        if (ChosenFingerprint() is { } fingerprint)
+        {
+            // FP-SPEC §4: the four TLS transports use the fingerprint learned for this network.
+            rawConfig = ColituFingerprint.Apply(rawConfig, candidates, fingerprint);
+            LogConnection($"uTLS fingerprint on this network: {fingerprint}");
+        }
+        var imported = await ConfigHandler.AddBatchServers(_config, rawConfig, ColituSubId, true);
         if (imported <= 0) throw new InvalidOperationException("Server config could not be imported.");
 
         var profiles = await AppManager.Instance.ProfileItems(ColituSubId) ?? [];
@@ -4029,6 +4068,7 @@ public sealed partial class ColituVpnService
         _tlsGate?.Cancel();
         _tlsGate = null;
         _roundLatency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        _roundTls = [];
         var lastGood = _adaptive.LastGoodTransport(_networkKey, serverId, DateTimeOffset.UtcNow);
         var offered = ordered.Select(item => item.Candidate.Protocol).ToList();
         bool Stalled(string protocol) => _adaptive.IsStalled(_networkKey, serverId, protocol, DateTimeOffset.UtcNow);
@@ -4189,6 +4229,7 @@ public sealed partial class ColituVpnService
     /// <summary>Applies the classifier to this round's TLS probes: ip_blocked skips the server (one probe event per port).</summary>
     private void NoteRoundTls(List<(string Protocol, ColituTlsResult Result)> tls)
     {
+        _roundTls = tls.Select(item => item.Result).ToList();
         if (tls.Count == 0)
         {
             return;
@@ -4313,6 +4354,89 @@ public sealed partial class ColituVpnService
         }
     }
 
+    /// <summary>The fingerprint the TLS transports use on this network (FP-SPEC §4); null on an old panel (no policy).</summary>
+    private string? ChosenFingerprint()
+    {
+        if (_session.FingerprintPolicy is not { } policy)
+        {
+            return null;
+        }
+        _fpDeviceId ??= ColituAuthService.Instance.DeviceId;
+        return ColituFingerprint.Name(_fpMemory.Choose(policy, _fpDeviceId, _networkKey, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>This round's TLS probe class for <paramref name="port"/>: the same port's result, else a failed one, else ok; null without probes.</summary>
+    private string? RoundTlsClass(int port)
+    {
+        var tls = _roundTls;
+        if (tls.Count == 0)
+        {
+            return null;
+        }
+        return tls.FirstOrDefault(item => item.Port == port)?.Class
+            ?? tls.FirstOrDefault(item => item.Class != ColituTlsClass.Ok)?.Class
+            ?? ColituTlsClass.Ok;
+    }
+
+    /// <summary>
+    /// FP-SPEC §5: a TLS transport carried nothing although its port answers (and the TLS probe, when it ran, said ok):
+    /// its fingerprint is marked failed on this network and, within the budget of 2 per connect, the same profile with the
+    /// next choice is returned to be tried right after. Null: no fingerprint-type failure, no policy, or nothing new to try.
+    /// </summary>
+    private async Task<(ColituConfigCandidate Candidate, ProfileItem Profile)?> FingerprintRetryAsync(ColituConfigCandidate candidate, ProfileItem profile, long ms)
+    {
+        var current = ColituFingerprint.Name(profile.Fingerprint);
+        if (_session.FingerprintPolicy is not { } policy || current == null || !ColituFingerprint.TakesFingerprint(candidate.Protocol))
+        {
+            return null;
+        }
+        var tcpOk = _roundLatency.TryGetValue(LatencyKey((candidate, profile)), out var latency)
+            ? latency >= 0
+            : await TcpConnectMsAsync(profile.Address, profile.Port) >= 0;
+        var probe = RoundTlsClass(profile.Port);
+        if (!ColituFingerprint.IsFingerprintFailure(candidate.Protocol, tcpOk, probe))
+        {
+            return null;
+        }
+        var now = DateTimeOffset.UtcNow;
+        _fpMemory.MarkFailed(_networkKey, current, now);
+        SaveState();
+        if (!ColituFingerprint.ShouldRetry(candidate.Protocol, tcpOk, probe, _fpRetriesThisConnect))
+        {
+            LogConnection($"uTLS fingerprint {current} failed on {candidate.Protocol} here; no fingerprint retry left in this connect");
+            return null;
+        }
+        _fpDeviceId ??= ColituAuthService.Instance.DeviceId;
+        var next = _fpMemory.Choose(policy, _fpDeviceId, _networkKey, now);
+        if (next.Length == 0 || next == current)
+        {
+            return null;
+        }
+        profile.Fingerprint = next;
+        if (await ConfigHandler.AddServerCommon(_config, profile) != 0)
+        {
+            return null;
+        }
+        _fpRetriesThisConnect++;
+        // A retry is a connect event of its own (FP-SPEC §6): the failed fingerprint is reported here.
+        ColituInsights.Instance.AddEvent(new ColituAcEvent
+        {
+            Kind = "connect",
+            NodeId = _attemptNodeId,
+            Protocol = candidate.Protocol,
+            Outcome = "fail",
+            Reason = "tls",
+            Ms = ColituAcSpec.ClampMs(ms),
+            FirstTry = false,
+            Mode = _attemptAutomatic ? "auto" : "manual",
+            Engine = _attemptAutomatic ? _attemptEngine : null,
+            Fingerprint = current
+        });
+        var probeNote = probe == null ? "" : ", TLS probe ok";
+        LogConnection($"uTLS fingerprint {current} carried nothing on {candidate.Protocol} (port answers{probeNote}): retrying it with {next}");
+        return (candidate, profile);
+    }
+
     /// <summary>
     /// ip_blocked (TLS-PROBE-SPEC §2): the network resets TLS to this address on two ports. No transport of it
     /// (Hysteria2 and Shadowsocks included) is tried and none is marked; the server is penalized for 30 minutes and
@@ -4377,6 +4501,7 @@ public sealed partial class ColituVpnService
                     throw new InvalidOperationException("Imported server could not be selected as default.");
                 }
                 _attemptProtocol = candidate.Protocol;
+                _attemptFingerprint = ColituFingerprint.TakesFingerprint(candidate.Protocol) ? ColituFingerprint.Name(profile.Fingerprint) : null;
                 LogConnection($"Trying transport {candidate.Protocol}: index={profile.IndexId}, address={ColituLogPrivacy.ForLog(profile.Address)}:{profile.Port}");
 
                 try
@@ -4450,6 +4575,13 @@ public sealed partial class ColituVpnService
                             _connectFallback = true;
                         }
                         _activeTransport = candidate.Protocol;
+                        _activeFingerprint = (candidate.Protocol, _attemptFingerprint);
+                        if (_attemptFingerprint != null && _session.FingerprintPolicy != null)
+                        {
+                            // FP-SPEC §5: a success records ok for this fingerprint on this network.
+                            _fpMemory.MarkOk(_networkKey, _attemptFingerprint, DateTimeOffset.UtcNow);
+                            SaveState();
+                        }
                         return;
                     }
                     // Without internet every transport fails: say so instead of blaming (and marking)
@@ -4471,6 +4603,14 @@ public sealed partial class ColituVpnService
                             RecordLmOutcome(config.ServerId ?? server?.Id, candidate.Protocol, ok: false, "no_traffic");
                         }
                         _failedThisConnect.Add(candidate.Protocol);
+                    }
+                    if (outcome != ColituParallelOutcome.SwapRoles && !_credentialsRefused && !_serverOutageThisRound
+                        && await FingerprintRetryAsync(candidate, profile, pairWatch.ElapsedMilliseconds) is { } retry)
+                    {
+                        // FP-SPEC §5: the same transport on the same server once more, with the next fingerprint.
+                        profiles = new List<(ColituConfigCandidate Candidate, ProfileItem Profile)>(profiles);
+                        profiles.Insert(index + 1, retry);
+                        isLast = false;
                     }
                     if (outcome == ColituParallelOutcome.SwapRoles && plan != null)
                     {
@@ -5333,6 +5473,7 @@ public sealed partial class ColituVpnService
             _session = JsonSerializer.Deserialize<ColituVpnSession>(File.ReadAllText(StatePath()), _jsonOptions) ?? new();
             // Before SaveState below, which writes the memory back (expired entries pruned).
             _adaptive.Load(_session.AdaptiveMemory, DateTimeOffset.UtcNow);
+            _fpMemory.Load(_session.FingerprintMemory);
             // SaveState below writes this run's status (Disconnected) over it.
             _statusAtLastExit = _session.Status;
             if (_session.PreferencesMigration < 1)
@@ -5367,7 +5508,8 @@ public sealed partial class ColituVpnService
             ConnectedAt = ConnectedAt,
             SelectionMode = _session.SelectionMode,
             Preferences = _session.Preferences.Normalize(),
-            AdaptiveMemory = _adaptive.Snapshot(DateTimeOffset.UtcNow)
+            AdaptiveMemory = _adaptive.Snapshot(DateTimeOffset.UtcNow),
+            FingerprintMemory = _fpMemory.Snapshot()
         };
         try
         {
@@ -5471,6 +5613,10 @@ public sealed class ColituServersResponse
     public ColituMeasureTargets? MeasureTargets { get; set; }
     /// <summary><c>features.tls_probe_events</c>: the panel takes the TLS probe event fields (false when absent).</summary>
     public bool TlsProbeEvents { get; set; }
+    /// <summary><c>fingerprint_policy</c> (FP-SPEC §2); null when the panel sent none (old panel: the endpoint's own fingerprint).</summary>
+    public ColituFpPolicy? FingerprintPolicy { get; set; }
+    /// <summary><c>features.fp_events</c>: the panel takes the <c>fingerprint</c> of connect events (false when absent).</summary>
+    public bool FingerprintEvents { get; set; }
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
 }
@@ -5862,6 +6008,10 @@ public sealed record ColituVpnSession
     public string? ClientNetwork { get; init; }
     /// <summary>Adaptive Connect memory (expiring, per network).</summary>
     public List<ColituAdaptiveEntry>? AdaptiveMemory { get; init; }
+    /// <summary>Learned uTLS fingerprint outcomes per network key (FP-SPEC §3; at most 8 networks × 10 names).</summary>
+    public Dictionary<string, Dictionary<string, ColituFpRecord>>? FingerprintMemory { get; init; }
+    /// <summary>The panel's <c>fingerprint_policy</c> of this network; null on an old panel (FP-SPEC §2).</summary>
+    public ColituFpPolicy? FingerprintPolicy { get; init; }
     /// <summary>Network hints: the last network token, the client_network it belongs to and when it came.</summary>
     public string? NetworkToken { get; init; }
     public string? NetworkTokenNetwork { get; init; }

@@ -114,10 +114,18 @@ public static class ColituNetworkHintsPolicy
             {
                 continue;
             }
-            var match = configs.FirstOrDefault(config => string.Equals(protocolOf(config), protocol, StringComparison.OrdinalIgnoreCase));
-            if (match != null && !first.Contains(match))
+            // By index, not FirstOrDefault: T is a value tuple in the connect path, where a miss
+            // would be default(T) (never null) and a null Candidate crashed the connect.
+            for (var i = 0; i < configs.Count; i++)
             {
-                first.Add(match);
+                if (string.Equals(protocolOf(configs[i]), protocol, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!first.Contains(configs[i]))
+                    {
+                        first.Add(configs[i]);
+                    }
+                    break;
+                }
             }
         }
         if (first.Count == 0)
